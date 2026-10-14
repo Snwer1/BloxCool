@@ -20,6 +20,8 @@ const DEFAULTS = {
   loggedIn: false,
   spotifyClientId: '',
   spotifyConnected: false,
+  lockSeen: {}, // look-lock notices the player already read: { userId: lockedAt }
+  showCustomImages: true, // false = hide other people's custom pictures (banners, backgrounds, profile pictures)
   musicOff: false, // true = no music player at all
   musicSource: 'pc', // 'pc' = Windows media session (free) | 'spotify' = Spotify Web API (Premium)
   overlayOpacity: 0.45,
@@ -1004,7 +1006,8 @@ function registerIpc() {
       if (j.banned) cache[id] = { reason: String(j.reason || '') };
       else delete cache[id];
       try { fs.writeFileSync(banCacheFile(), JSON.stringify(cache)); } catch { /* ignore */ }
-      return j.banned ? { banned: true, reason: String(j.reason || '') } : { banned: false };
+      if (j.banned) return { banned: true, reason: String(j.reason || '') };
+      return j.locked ? { banned: false, locked: true, lockReason: String(j.lockReason || ''), lockAt: Number(j.lockAt) || 0 } : { banned: false };
     } catch {
       // server asleep or offline: a ban we already know about stays in force
       return cache[id] ? { banned: true, reason: cache[id].reason } : { banned: false };
@@ -1021,11 +1024,21 @@ function registerIpc() {
       return { ok: false, error: String((e && e.message) || e) };
     }
   });
+  ipcMain.handle('group:report', async (_e, id) => {
+    try {
+      if (!/^\d{1,15}$/.test(String(id))) throw new Error('bad id');
+      if (!settings.userId) throw new Error('Log in or set your username first');
+      await groupFetch('POST', '/report/' + id, {});
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
   ipcMain.handle('group:save', async () => {
     try {
       if (!settings.userId) throw new Error('Log in or set your username first');
-      await groupFetch('PUT', '/profile/' + settings.userId, settings.profileCustom || {});
-      return { ok: true };
+      const j = await groupFetch('PUT', '/profile/' + settings.userId, settings.profileCustom || {});
+      return { ok: true, review: (j && j.review) || {}, checking: !!(j && j.checking), blockedUntil: Number(j && j.blockedUntil) || 0, locked: !!(j && j.locked) };
     } catch (e) {
       return { ok: false, error: String((e && e.message) || e) };
     }

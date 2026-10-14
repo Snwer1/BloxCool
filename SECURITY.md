@@ -26,7 +26,8 @@ and `renderer/`.
 
 The profile server's code is not published. It stores, per Roblox user ID: nickname, tagline, accent color,
 banner/background/picture images, and chosen effects. It does not receive your cookie or password. Writes need a random
-per-install key. Like any server, it sees the IP address of each request.
+per-install key. Pictures other players upload are shown only after an automatic safety check, which sends the picture
+to a moderation service; if the check is not running, they stay hidden. Like any server, it sees the IP address of each request.
 
 ## What is not published
 

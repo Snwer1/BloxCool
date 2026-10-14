@@ -3197,7 +3197,13 @@ function renderSettings() {
     lastLookError = r.ok ? '' : r.error;
     if (r.ok) {
       looks[String(S.userId)] = { look: { ...draft }, at: Date.now() };
-      toast('Saved. Everyone using BloxCool can see it now.');
+      if (r.locked) toast('Saved, but the owner has locked your look, so custom pictures and descriptions are left out.');
+      else if (r.blockedUntil) toast("Saved, but your pictures were left out. Too many people reported them, so you can't upload pictures until " + new Date(r.blockedUntil).toLocaleString() + '.');
+      const rv = r.review || {};
+      const waiting = Object.values(rv).some((v) => v !== 'approved');
+      if (!r.blockedUntil && !r.locked) toast(!waiting ? 'Saved. Everyone using BloxCool can see it now.'
+        : r.checking ? 'Saved. Your pictures are being checked first, others will see them in a minute.'
+        : 'Saved. Your pictures stay hidden from others until the safety check is switched on.');
       loadProfile();
     } else toast("Saved on this PC, but couldn't share it: " + r.error);
     profileDraft = null;
@@ -3313,6 +3319,23 @@ function renderSettings() {
 
   // ----- Music -----
   const mus = el('div', 'set-sec');
+  mus.appendChild(el('h3', null, 'Other players\' pictures'));
+  {
+    const row = el('div', 'opt-row');
+    const txt = el('div', 'opt-txt');
+    txt.append(el('b', null, 'Show custom pictures'), el('span', null, 'Banners, backgrounds and profile pictures other players uploaded. They are checked before anyone sees them. Turn off to see none.'));
+    const sw = el('button', 'switch' + (S.showCustomImages === false ? '' : ' on'));
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(S.showCustomImages !== false));
+    sw.appendChild(el('i'));
+    sw.onclick = async () => {
+      S = await window.api.setSettings({ showCustomImages: S.showCustomImages === false });
+      renderSettings();
+    };
+    row.append(txt, sw);
+    mus.appendChild(row);
+  }
+  mus.appendChild(el('h3', null, 'Music'));
   mus.appendChild(el('h3', null, 'Music'));
   {
     const row = el('div', 'opt-row');
@@ -4170,7 +4193,13 @@ async function fetchLooks(ids, force) {
 }
 const lookOf = (id) => {
   if (String(id) === String(S.userId) && S.profileCustom && Object.keys(S.profileCustom).length) return S.profileCustom;
-  return (looks[String(id)] && looks[String(id)].look) || null;
+  const l = (looks[String(id)] && looks[String(id)].look) || null;
+  if (l && S.showCustomImages === false) {
+    const c = { ...l };
+    delete c.pfp; delete c.banner; delete c.bg;
+    return c;
+  }
+  return l;
 };
 let lastLookError = '';
 function lookDebug() {
@@ -4453,7 +4482,21 @@ async function showProfile(u) {
     }
     actions.append(join);
   }
-  actions.append(web, done);
+  actions.append(web);
+  if (String(u.id) !== String(S.userId)) {
+    const lk = lookOf(u.id);
+    if (lk && (lk.pfp || lk.banner || lk.bg)) {
+      const rep = el('button', 'pill', 'Report pictures');
+      rep.title = "Report this player's custom pictures as inappropriate";
+      rep.onclick = async () => {
+        rep.disabled = true;
+        const r = await window.api.reportProfile(u.id);
+        toast(r.ok ? 'Thanks. If enough people report it, the pictures are hidden.' : "Couldn't send the report: " + r.error);
+      };
+      actions.append(rep);
+    }
+  }
+  actions.append(done);
   info.appendChild(actions);
 
   const top = el('div', 'ptop');
