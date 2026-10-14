@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en" class="introing">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' https: file: data: blob:; media-src 'self' file: https:; style-src 'self' 'unsafe-inline'; font-src 'self' file:; script-src 'self'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BloxCool</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Background -->
+  <div id="bg">
+    <div class="bglayer" id="bgA"></div>
+    <div class="bglayer" id="bgB"></div>
+    <div id="overlay"></div>
+  </div>
+
+  <!-- Window controls -->
+  <div id="dragbar"></div>
+  <div id="winctl">
+    <button id="wmin" title="Minimize">&#8211;</button>
+    <button id="wmax" title="Maximize">&#9633;</button>
+    <button id="wclose" title="Close">&#10005;</button>
+  </div>
+
+  <div id="brand">BloxCool</div>
+
+  <!-- Left sidebar -->
+  <nav id="sidebar"></nav>
+
+  <!-- Page -->
+  <main id="main">
+    <section id="top">
+      <!-- Music player -->
+      <div id="player">
+        <div id="artwrap"><img id="art" alt="" /></div>
+        <div id="pinfo">
+          <div id="ptext">
+            <div id="ptitle">No music yet</div>
+            <div id="partist">Click play to add songs</div>
+          </div>
+          <div id="pctl">
+            <button id="pprev" class="ibtn" title="Previous"></button>
+            <button id="pplay" class="ibtn big" title="Play / Pause"></button>
+            <button id="pnext" class="ibtn" title="Next"></button>
+          </div>
+          <div id="pprog">
+            <span id="ptcur">0:00</span>
+            <input type="range" id="pseek" min="0" max="1000" value="0" />
+            <span id="pttot">0:00</span>
+          </div>
+          <div id="pvol">
+            <span id="pvolicon"></span>
+            <input type="range" id="pvolume" min="0" max="1" step="0.01" value="0.5" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Friends -->
+      <div id="friends">
+        <div class="sechead"><h2 id="friendsTitle">Friends</h2></div>
+        <div class="hrow" id="friendsRow"></div>
+      </div>
+
+      <!-- Mini profile -->
+      <div id="mini">
+        <button id="miniProfile" class="minibtn">
+          <img id="miniAvatar" alt="" />
+          <span id="miniName">Guest</span>
+        </button>
+        <span id="miniStatus"><i></i>Online</span>
+        <button id="bell" class="ibtn" title="Notifications"></button>
+      </div>
+    </section>
+
+    <section class="gamesec">
+      <div class="sechead">
+        <h2>Continue</h2>
+        <div id="tabs"></div>
+      </div>
+      <div class="rowwrap"><button class="rowarrow left" id="contPrev" aria-label="Scroll left">‹</button><div class="hrow" id="continueRow"></div><button class="rowarrow right" id="contNext" aria-label="Scroll right">›</button></div>
+    </section>
+
+    <section class="gamesec">
+      <div class="sechead"><h2>Recommended For You</h2></div>
+      <div class="hrow games" id="recRow"></div>
+    </section>
+  </main>
+
+  <!-- Settings page -->
+  <section id="chartsView"></section>
+  <section id="avatarView"></section>
+  <section id="settingsView"></section>
+  <section id="newsView"></section>
+
+  <!-- Floating popup / menu (one at a time) -->
+  <div id="float"></div>
+
+  <!-- Prompt modal -->
+  <div id="modal">
+    <div id="modalBox">
+      <h3 id="modalTitle"></h3>
+      <p id="modalText"></p>
+      <input id="modalInput" type="text" spellcheck="false" />
+      <div id="modalBtns">
+        <button id="modalCancel" class="pill">Cancel</button>
+        <button id="modalOk" class="pill primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- In-app profile viewer -->
+  <div id="profile"><div id="profileBox"></div></div>
+
+  <div id="gamepage"><div id="gameBox"></div></div>
+
+  <div id="toast"></div>
+
+  <div id="intro"><div id="introText"></div></div>
+
+  <script src="layout.js"></script>
+  <script src="news.js"></script>
+  <script src="ban.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

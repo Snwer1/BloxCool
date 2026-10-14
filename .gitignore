@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+.env
+# never commit anything from a running copy
+data.json
+settings.json
+ban-cache.json
+*.bin
