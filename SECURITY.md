@@ -19,14 +19,18 @@
 | `itunes.apple.com`, `api.deezer.com` | Album art lookups for the music player |
 | the profile server in `bloxhome.config.json` | Optional: shares profile looks between BloxCool users |
 
-There is no analytics, ad or telemetry code. You can check with a search for `fetch(` and `net.fetch(` in `main.js`
-and `renderer/`.
+There is no ad code and no third-party analytics. The one thing that works like a check-in is described under "The profile server"
+below. You can check what the app sends with a search for `fetch(` and `net.fetch(` in `main.js` and `renderer/`.
 
 ## The profile server
 
 The profile server's code is not published. It stores, per Roblox user ID: nickname, tagline, accent color,
 banner/background/picture images, and chosen effects. It does not receive your cookie or password. Writes need a random
 per-install key. Like any server, it sees the IP address of each request.
+
+When BloxCool starts, and about once a minute while it is open, the app asks the server whether your account is banned or
+locked. That request carries your Roblox user ID and username. The server keeps a list of these (ID, username, first and
+last time seen) so the owner can moderate. It is not used for anything else. The IP address is not stored in that list.
 
 ## What is not published
 

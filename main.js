@@ -21,6 +21,7 @@ const DEFAULTS = {
   spotifyClientId: '',
   spotifyConnected: false,
   lockSeen: {}, // look-lock notices the player already read: { userId: lockedAt }
+  restricted: {}, // what each account was last under, so a lifted ban/lock can be announced: { userId: { ban, lock } }
   showCustomImages: true, // false = hide other people's custom pictures (banners, backgrounds, profile pictures)
   musicOff: false, // true = no music player at all
   musicSource: 'pc', // 'pc' = Windows media session (free) | 'spotify' = Spotify Web API (Premium)
@@ -1002,15 +1003,15 @@ function registerIpc() {
     let cache = {};
     try { cache = JSON.parse(fs.readFileSync(banCacheFile(), 'utf8')); } catch { /* none */ }
     try {
-      const j = await groupFetch('GET', '/banned?id=' + id);
-      if (j.banned) cache[id] = { reason: String(j.reason || '') };
+      const j = await groupFetch('GET', '/banned?id=' + id + (String(settings.userId) === id && settings.username ? '&name=' + encodeURIComponent(String(settings.username).slice(0, 32)) : ''));
+      if (j.banned) cache[id] = { reason: String(j.reason || ''), until: Number(j.until) || 0 };
       else delete cache[id];
       try { fs.writeFileSync(banCacheFile(), JSON.stringify(cache)); } catch { /* ignore */ }
-      if (j.banned) return { banned: true, reason: String(j.reason || '') };
-      return j.locked ? { banned: false, locked: true, lockReason: String(j.lockReason || ''), lockAt: Number(j.lockAt) || 0 } : { banned: false };
+      if (j.banned) return { banned: true, reason: String(j.reason || ''), until: Number(j.until) || 0 };
+      return j.locked ? { banned: false, locked: true, lockReason: String(j.lockReason || ''), lockAt: Number(j.lockAt) || 0, lockUntil: Number(j.lockUntil) || 0 } : { banned: false };
     } catch {
       // server asleep or offline: a ban we already know about stays in force
-      return cache[id] ? { banned: true, reason: cache[id].reason } : { banned: false };
+      return cache[id] && !(cache[id].until && cache[id].until <= Date.now()) ? { banned: true, reason: cache[id].reason, until: cache[id].until || 0 } : { banned: false };
     }
   });
 
@@ -1028,7 +1029,7 @@ function registerIpc() {
     try {
       if (!settings.userId) throw new Error('Log in or set your username first');
       const j = await groupFetch('PUT', '/profile/' + settings.userId, settings.profileCustom || {});
-      return { ok: true, locked: !!(j && j.locked) };
+      return { ok: true, locked: !!(j && j.locked), lockUntil: Number(j && j.lockUntil) || 0 };
     } catch (e) {
       return { ok: false, error: String((e && e.message) || e) };
     }
@@ -1099,6 +1100,7 @@ function registerIpc() {
   // Starts the game. Direct launch (like Bloxstrap does): get a one-time login ticket for your account
   // and start RobloxPlayerBeta.exe ourselves. Falls back to the roblox:// link if that is not possible.
   ipcMain.handle('game:launch', async (_e, placeId) => {
+    if (typeof localBlock === 'function' && localBlock()) throw new Error('Test accounts cannot join games');
     const id = String(placeId);
     if (!/^\d{1,15}$/.test(id)) throw new Error('Invalid place id');
     try {
@@ -1113,6 +1115,7 @@ function registerIpc() {
   });
   // Join a friend who is in a game (same server)
   ipcMain.handle('game:join', async (_e, placeId, gameId) => {
+    if (typeof localBlock === 'function' && localBlock()) throw new Error('Test accounts cannot join games');
     const pid = String(placeId);
     const gid = String(gameId || '');
     if (!/^\d{1,15}$/.test(pid)) throw new Error('Invalid place id');
@@ -1185,6 +1188,10 @@ function registerIpc() {
   });
 
   ipcMain.handle('auth:me', async () => {
+    if (typeof localMe === 'function') {
+      const lm = localMe();
+      if (lm) return { me: lm, settings };
+    }
     let me = null;
     try {
       me = await authFetch('https://users.roblox.com/v1/users/authenticated');
@@ -1216,11 +1223,17 @@ function registerIpc() {
   // ---- Accounts ----
   const publicAccounts = () => ({
     active: settings.loggedIn ? settings.userId : 0,
-    accounts: loadAccounts().map((a) => ({ userId: a.userId, username: a.username, displayName: a.displayName })),
+    accounts: loadAccounts()
+      .map((a) => ({ userId: a.userId, username: a.username, displayName: a.displayName }))
+      .concat(typeof extraAccounts === 'function' ? extraAccounts() : []),
   });
   ipcMain.handle('accounts:list', () => publicAccounts());
 
   ipcMain.handle('accounts:switch', async (_e, userId) => {
+    if (typeof localAccountSwitch === 'function') {
+      const lr = await localAccountSwitch(userId);
+      if (lr) return lr;
+    }
     const acc = loadAccounts().find((a) => a.userId === Number(userId));
     if (!acc) return { ok: false, error: 'Account not found', settings };
     try {
@@ -1241,13 +1254,16 @@ function registerIpc() {
 
   ipcMain.handle('accounts:remove', async (_e, userId) => {
     const id = Number(userId);
-    accountsCache = loadAccounts().filter((a) => a.userId !== id);
-    saveAccounts();
-    if (settings.userId === id && settings.loggedIn) {
-      try { await authSession().clearStorageData(); } catch { /* ignore */ }
-      csrfToken = '';
-      settings.loggedIn = false;
-      saveSettings();
+    const handled = typeof localAccountRemove === 'function' && (await localAccountRemove(id));
+    if (!handled) {
+      accountsCache = loadAccounts().filter((a) => a.userId !== id);
+      saveAccounts();
+      if (settings.userId === id && settings.loggedIn) {
+        try { await authSession().clearStorageData(); } catch { /* ignore */ }
+        csrfToken = '';
+        settings.loggedIn = false;
+        saveSettings();
+      }
     }
     return { ...publicAccounts(), settings };
   });

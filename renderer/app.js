@@ -1024,6 +1024,7 @@ const ownerReady = (async () => {
 async function loadProfile() {
   const mine = S.userId ? lookOf(S.userId) || {} : {};
   $('#miniName').textContent = mine.nick || S.username || 'Guest';
+  if (typeof testAccTag === 'function') testAccTag();
   paintMiniBadge();
   if (!S.userId) return;
   const map = await headshots([S.userId]);
@@ -1041,6 +1042,11 @@ function initMini() {
       e.currentTarget,
       (f) => {
         f.appendChild(el('div', 'pop-name', 'Notifications'));
+        const lkN = typeof testAccLock === 'function' ? testAccLock('notifications') : null;
+        if (lkN) {
+          f.appendChild(lkN);
+          return;
+        }
         f.appendChild(
           el(
             'div',
@@ -1209,6 +1215,14 @@ async function loadFriends() {
     $('#friendsTitle').textContent = 'Friends';
     row.appendChild(el('div', 'empty', 'Set your Roblox username (More → Change username) to see friends.'));
     return;
+  }
+  {
+    const lk = typeof testAccLock === 'function' ? testAccLock('friends') : null;
+    if (lk) {
+      $('#friendsTitle').textContent = 'Friends';
+      row.appendChild(lk);
+      return;
+    }
   }
   let friends = [];
   try {
@@ -1440,7 +1454,9 @@ async function togglePin(g) {
   await refreshContinue();
 }
 
+const onTest = () => typeof testAccActive === 'function' && testAccActive();
 async function playGame(g) {
+  if (typeof testAccGuard === 'function' && testAccGuard()) return;
   try {
     const how = await window.api.launch(g.placeId);
     if (how === 'direct') toast('Launching ' + g.name + '…');
@@ -1564,7 +1580,7 @@ function parseSorts(j) {
 
 async function loadHome() {
   homeDebug = { loggedIn: !!S.loggedIn, tried: [], sorts: [] };
-  const call = S.loggedIn ? JA : J;
+  const call = S.loggedIn && !onTest() ? JA : J;
   const sid = uuid4();
   const attempts = [
     ['omni-recommendation', () => call('https://apis.roblox.com/discovery-api/omni-recommendation', { method: 'POST', body: { pageType: 'Home', sessionId: sid } })],
@@ -1652,7 +1668,7 @@ let chartLoading = false;
 
 async function loadCharts() {
   chartDebug = { tried: [] };
-  const call = S.loggedIn ? JA : J;
+  const call = S.loggedIn && !onTest() ? JA : J;
   const sid = uuid4();
   let sorts = [];
   // Home-page lists (Continue, Recommended, Friends...) are NOT charts.
@@ -2642,6 +2658,11 @@ async function toggleWear(item) {
 
 async function openAvatar() {
   const v = $('#avatarView');
+  const lkA = typeof testAccLock === 'function' ? testAccLock('avatar') : null;
+  if (lkA) {
+    v.replaceChildren(el('h1', null, 'Avatar'), lkA);
+    return;
+  }
   if (!S.loggedIn) {
     v.replaceChildren(el('h1', null, 'Avatar'));
     v.appendChild(el('div', 'empty', 'Log in to edit your avatar.'));
@@ -3197,7 +3218,7 @@ function renderSettings() {
     lastLookError = r.ok ? '' : r.error;
     if (r.ok) {
       looks[String(S.userId)] = { look: { ...draft }, at: Date.now() };
-      toast(r.locked ? 'Saved, but the owner has locked your look, so custom pictures and descriptions are left out.' : 'Saved. Everyone using BloxCool can see it now.');
+      toast(r.locked ? 'Your look is locked, so nothing was changed. ' + untilText(r.lockUntil, 'Locked') : 'Saved. Everyone using BloxCool can see it now.');
       loadProfile();
     } else toast("Saved on this PC, but couldn't share it: " + r.error);
     profileDraft = null;
@@ -3246,6 +3267,28 @@ function renderSettings() {
   pl.addEventListener('input', refreshDirty);
   pl.addEventListener('click', () => setTimeout(refreshDirty, 0));
   refreshDirty();
+  if (lookLock) {
+    // look-locked: nothing in the editor can be changed. Every try shows why, and a red notice stays on top.
+    const why = '🔒 Your profile look is locked by the owner. ' + (lookLock.reason ? 'Reason: ' + lookLock.reason + '. ' : '') + untilText(lookLock.until, 'Locked');
+    const note = el('div', 'locknote');
+    note.textContent = why;
+    pl.prepend(note);
+    pl.style.opacity = '0.75';
+    bar.hidden = true;
+    refreshDirty = () => {};
+    const blocked = (e) => {
+      if (e.target === note || note.contains(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.target && e.target.blur) e.target.blur();
+      note.classList.remove('shake');
+      void note.offsetWidth; // restart the animation
+      note.classList.add('shake');
+      note.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      toast("You can't change your look: it is locked. " + untilText(lookLock.until, 'Locked'));
+    };
+    ['click', 'mousedown', 'keydown', 'focusin', 'input', 'change', 'dragover', 'drop'].forEach((t) => pl.addEventListener(t, blocked, true));
+  }
   pages.profile.push(pl);
 
   // ----- BloxCool font -----
@@ -3800,7 +3843,7 @@ function applyPresence() {
 
 async function loadPresence() {
   presenceMap.clear();
-  if (!S.loggedIn || !friendEls.length) return applyPresence();
+  if (!S.loggedIn || onTest() || !friendEls.length) return applyPresence();
   try {
     const r = await JA('https://presence.roblox.com/v1/presence/users', {
       method: 'POST',
@@ -3817,7 +3860,7 @@ async function refreshNotifications() {
   const badge = $('#bellBadge');
   if (!badge) return;
   unreadCount = 0;
-  if (S.loggedIn) {
+  if (S.loggedIn && !onTest()) {
     try {
       const r = await JA('https://notifications.roblox.com/v2/stream-notifications/unread-count');
       unreadCount = Number(r.unreadNotifications) || 0;
@@ -4186,7 +4229,12 @@ async function fetchLooks(ids, force) {
   return r;
 }
 const lookOf = (id) => {
-  if (String(id) === String(S.userId) && S.profileCustom && Object.keys(S.profileCustom).length) return S.profileCustom;
+  if (String(id) === String(S.userId) && S.profileCustom && Object.keys(S.profileCustom).length) {
+    if (!lookLock) return S.profileCustom;
+    const c = { ...S.profileCustom }; // look-locked: you don't see your own locked parts either
+    delete c.pfp; delete c.banner; delete c.bg; delete c.tagline;
+    return c;
+  }
   const l = (looks[String(id)] && looks[String(id)].look) || null;
   if (l && S.showCustomImages === false) {
     const c = { ...l };
@@ -4461,6 +4509,7 @@ async function showProfile(u) {
     join.style.cssText = 'padding:8px 22px;font-size:14px;border-radius:10px';
     if (pid && pres.gameId) {
       join.onclick = async () => {
+        if (typeof testAccGuard === 'function' && testAccGuard()) return;
         try {
           await window.api.joinFriend(pid, pres.gameId);
           toast('Joining ' + (u.displayName || u.name) + '…');

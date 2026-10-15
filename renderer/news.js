@@ -160,6 +160,11 @@ async function openNews() {
     });
   }
   async function run(force) {
+    const lk = typeof testAccLock === 'function' ? testAccLock('news') : null;
+    if (lk) {
+      list.replaceChildren(lk);
+      return;
+    }
     if (!S.userId) {
       list.replaceChildren(el('div', 'empty', 'Log in (Settings → Accounts) to see news from your groups.'));
       return;
