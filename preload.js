@@ -29,7 +29,6 @@ contextBridge.exposeInMainWorld('api', {
   banCheck: (id) => ipcRenderer.invoke('ban:check', id),
   grantsGet: () => ipcRenderer.invoke('config:grants'),
   lookGet: (ids) => ipcRenderer.invoke('look:get', ids),
-  reportProfile: (id) => ipcRenderer.invoke('group:report', id),
   groupSave: () => ipcRenderer.invoke('group:save'),
   accountsList: () => ipcRenderer.invoke('accounts:list'),
   accountsSwitch: (id) => ipcRenderer.invoke('accounts:switch', id),

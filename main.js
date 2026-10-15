@@ -1024,21 +1024,11 @@ function registerIpc() {
       return { ok: false, error: String((e && e.message) || e) };
     }
   });
-  ipcMain.handle('group:report', async (_e, id) => {
-    try {
-      if (!/^\d{1,15}$/.test(String(id))) throw new Error('bad id');
-      if (!settings.userId) throw new Error('Log in or set your username first');
-      await groupFetch('POST', '/report/' + id, {});
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: String((e && e.message) || e) };
-    }
-  });
   ipcMain.handle('group:save', async () => {
     try {
       if (!settings.userId) throw new Error('Log in or set your username first');
       const j = await groupFetch('PUT', '/profile/' + settings.userId, settings.profileCustom || {});
-      return { ok: true, review: (j && j.review) || {}, checking: !!(j && j.checking), blockedUntil: Number(j && j.blockedUntil) || 0, locked: !!(j && j.locked) };
+      return { ok: true, locked: !!(j && j.locked) };
     } catch (e) {
       return { ok: false, error: String((e && e.message) || e) };
     }
