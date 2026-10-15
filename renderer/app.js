@@ -1208,7 +1208,7 @@ async function loadFriends() {
   const circle = el('div', 'addcircle');
   circle.innerHTML = ICONS.addfriend;
   add.append(circle, el('span', null, 'Add Friends'));
-  add.onclick = () => window.api.openLink('https://www.roblox.com/users/friends');
+  add.onclick = showFriendSearch;
   row.appendChild(add);
 
   if (!S.userId) {
@@ -4067,6 +4067,209 @@ async function welcome() {
   }
 }
 
+// ---------- In-app cards: items, groups and friend search (so these buttons don't send you to the website) ----------
+function openCard(parts) {
+  const my = ++profileToken;
+  closeFloat();
+  const box = $('#profileBox');
+  box.replaceChildren();
+  box.classList.remove('has-banner');
+  const closeX = el('button', 'pclose', '✕');
+  closeX.title = 'Close';
+  closeX.onclick = closeProfile;
+  box.append(closeX, ...parts);
+  box.scrollTop = 0;
+  $('#profile').classList.add('open');
+  return my;
+}
+function cardButtons(back, webUrl, webLabel) {
+  const row = el('div', 'pactions');
+  if (back) {
+    const b = el('button', 'pill', '← Back');
+    b.onclick = back;
+    row.appendChild(b);
+  }
+  if (webUrl) {
+    const w = el('button', 'pill', webLabel || 'Open on roblox.com');
+    w.onclick = () => window.api.openLink(webUrl);
+    row.appendChild(w);
+  }
+  const done = el('button', 'pill primary', 'Close');
+  done.onclick = closeProfile;
+  row.appendChild(done);
+  return row;
+}
+function cardStat(box, value, label) {
+  const s = el('div', 'pstat');
+  s.append(el('b', null, value), el('span', null, label));
+  box.appendChild(s);
+}
+async function showItemCard(assetId, imageUrl, back) {
+  const pic = el('div', 'pavatar full');
+  const im = el('img');
+  im.alt = '';
+  if (imageUrl) im.src = imageUrl;
+  pic.appendChild(im);
+  const info = el('div', 'pinfo2');
+  const name = el('div', 'pname', 'Loading…');
+  const sub = el('div', 'puser', '');
+  const stats = el('div', 'pstats');
+  const desc = el('div', 'pbio', '');
+  info.append(name, sub, stats, el('div', 'plabel', 'Description'), desc, cardButtons(back, `https://www.roblox.com/catalog/${assetId}`, 'Open in catalog'));
+  const top = el('div', 'ptop');
+  top.append(pic, info);
+  const my = openCard([top]);
+  try {
+    const d = await J(`https://economy.roblox.com/v2/assets/${assetId}/details`);
+    if (my !== profileToken) return;
+    name.textContent = d.Name || 'Item';
+    sub.textContent = d.Creator && d.Creator.Name ? 'by ' + d.Creator.Name : '';
+    cardStat(stats, d.IsForSale ? (d.PriceInRobux ? 'R$ ' + fmtNum(d.PriceInRobux) : 'Free') : 'Off sale', 'Price');
+    if (d.IsLimited || d.IsLimitedUnique) cardStat(stats, 'Limited', 'Rarity');
+    if (typeof d.Sales === 'number' && d.Sales) cardStat(stats, fmtNum(d.Sales), 'Sold');
+    desc.textContent = d.Description || 'No description.';
+  } catch {
+    if (my !== profileToken) return;
+    name.textContent = 'This item';
+    desc.textContent = "Couldn't load the details. Roblox may be slow right now.";
+  }
+}
+async function showGroupCard(groupId, back) {
+  const pic = el('div', 'pavatar');
+  const im = el('img');
+  im.alt = '';
+  pic.appendChild(im);
+  const info = el('div', 'pinfo2');
+  const name = el('div', 'pname', 'Loading…');
+  const sub = el('div', 'puser', '');
+  const stats = el('div', 'pstats');
+  const desc = el('div', 'pbio', '');
+  const shoutLabel = el('div', 'plabel', 'Group shout');
+  const shout = el('div', 'pbio', '');
+  shoutLabel.hidden = true;
+  shout.hidden = true;
+  info.append(name, sub, stats, el('div', 'plabel', 'About'), desc, shoutLabel, shout, cardButtons(back, `https://www.roblox.com/communities/${groupId}`, 'Open on roblox.com'));
+  const top = el('div', 'ptop');
+  top.append(pic, info);
+  const my = openCard([top]);
+  J(`https://thumbnails.roblox.com/v1/groups/icons?groupIds=${groupId}&size=150x150&format=Png&isCircular=false`)
+    .then((r) => {
+      const d = (r.data || [])[0];
+      if (d && d.imageUrl && my === profileToken) im.src = d.imageUrl;
+    })
+    .catch(() => {});
+  try {
+    const g = await J(`https://groups.roblox.com/v1/groups/${groupId}`);
+    if (my !== profileToken) return;
+    name.textContent = g.name || 'Group';
+    const o = g.owner;
+    sub.textContent = o ? 'Owned by ' + (o.displayName || o.username || '') : '';
+    cardStat(stats, fmtNum(g.memberCount || 0), 'Members');
+    cardStat(stats, g.publicEntryAllowed ? 'Open' : 'Approval needed', 'Joining');
+    desc.textContent = g.description || 'No description.';
+    if (g.shout && g.shout.body) {
+      shoutLabel.hidden = false;
+      shout.hidden = false;
+      shout.textContent = g.shout.body + (g.shout.poster ? '\n\n— ' + (g.shout.poster.displayName || g.shout.poster.username) : '');
+    }
+  } catch {
+    if (my !== profileToken) return;
+    name.textContent = 'This group';
+    desc.textContent = "Couldn't load the group. Roblox may be slow right now.";
+  }
+}
+function showFriendSearch() {
+  const title = el('div', 'pname', 'Add friends');
+  const note = el('div', 'puser', 'Search a Roblox username, then send a friend request.');
+  const row = el('div', 'pactions');
+  const q = el('input');
+  q.id = 'friendSearchInput';
+  q.type = 'text';
+  q.placeholder = 'Username…';
+  q.style.cssText = 'flex:1;min-width:0;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:inherit;font:inherit';
+  const go = el('button', 'pill primary', 'Search');
+  row.append(q, go);
+  const results = el('div', 'acctlist');
+  results.style.maxWidth = 'none';
+  const done = el('div', 'pactions');
+  const close = el('button', 'pill', 'Close');
+  close.onclick = closeProfile;
+  done.appendChild(close);
+  const box = el('div', 'pinfo2');
+  box.style.paddingRight = '28px';
+  const locked = typeof onTest === 'function' && onTest();
+  box.append(title, note, row);
+  if (locked && typeof testAccLock === 'function') box.appendChild(testAccLock('friends'));
+  else if (!S.loggedIn) box.appendChild(el('div', 'empty', 'Log in (Settings → Accounts) to send friend requests. You can still search and open profiles.'));
+  box.append(results, done);
+  const my = openCard([box]);
+  const run = async () => {
+    const k = q.value.trim();
+    if (!k) return;
+    results.replaceChildren(el('div', 'empty', 'Searching…'));
+    let list = [];
+    let failed = 0;
+    try {
+      const r = await J(`https://users.roblox.com/v1/users/search?keyword=${encodeURIComponent(k)}&limit=10`);
+      list = r.data || [];
+    } catch {
+      failed++;
+    }
+    try {
+      const u = await resolveUsername(k); // an exact username match goes first
+      list = [u, ...list.filter((x) => x.id !== u.id)];
+    } catch {
+      /* no exact match */
+    }
+    if (my !== profileToken) return;
+    results.replaceChildren();
+    if (!list.length) return results.appendChild(el('div', 'empty', failed ? "Couldn't search right now. Try again in a moment." : 'No one found with that name.'));
+    const shots = await headshots(list.map((x) => x.id));
+    if (my !== profileToken) return;
+    const myFriends = new Set((friendEls || []).map((x) => x.f.id));
+    list.forEach((u) => {
+      const r = el('div', 'acctrow');
+      const im = el('img');
+      im.alt = '';
+      if (shots.get(u.id)) im.src = shots.get(u.id);
+      const names = el('div', 'acctnames');
+      names.append(el('b', null, u.displayName || u.name), el('span', null, '@' + u.name));
+      const prof = el('button', 'pill', 'Profile');
+      prof.onclick = () => showProfile({ id: u.id, name: u.name, displayName: u.displayName || u.name, shot: shots.get(u.id) });
+      r.append(im, names, prof);
+      if (String(u.id) === String(S.userId)) {
+        r.appendChild(el('span', 'acctbadge', 'You'));
+      } else if (myFriends.has(u.id)) {
+        r.appendChild(el('span', 'acctbadge', 'Friends'));
+      } else {
+        const add = el('button', 'pill primary', 'Add friend');
+        add.disabled = !S.loggedIn || locked;
+        add.onclick = async () => {
+          add.disabled = true;
+          add.textContent = 'Sending…';
+          try {
+            await JA(`https://friends.roblox.com/v1/users/${u.id}/request-friendship`, { method: 'POST', body: {} });
+            add.textContent = 'Request sent';
+            toast('Friend request sent to ' + (u.displayName || u.name));
+          } catch (e) {
+            add.disabled = false;
+            add.textContent = 'Add friend';
+            const m = String((e && e.message) || e);
+            toast(/400/.test(m) ? "Couldn't send it: you may already be friends or have a request pending." : /403|401/.test(m) ? "Roblox didn't allow it (their privacy settings, or your login expired)." : "Couldn't send the request. Try again.");
+          }
+        };
+        r.appendChild(add);
+      }
+      results.appendChild(r);
+    });
+  };
+  go.onclick = run;
+  q.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') run();
+  });
+  setTimeout(() => q.focus(), 80);
+}
+
 function closeProfile() {
   $('#profile').classList.remove('open');
   profileToken++;
@@ -4135,8 +4338,8 @@ async function loadProfileExtras(u, my, more, info) {
       im.src = d.imageUrl;
       im.alt = '';
       t.appendChild(im);
-      t.title = 'Open in the catalog';
-      t.onclick = () => window.api.openLink(`https://www.roblox.com/catalog/${d.targetId}`);
+      t.title = 'View item';
+      t.onclick = () => showItemCard(d.targetId, d.imageUrl, () => showProfile(u));
       secWear.body.appendChild(t);
     });
     if (secWear.body.children.length) secWear.show();
@@ -4196,7 +4399,7 @@ async function loadProfileExtras(u, my, more, info) {
       im.alt = '';
       t.append(im, el('span', null, x.group.name));
       t.title = (x.role && x.role.name) || '';
-      t.onclick = () => window.api.openLink(`https://www.roblox.com/communities/${x.group.id}`);
+      t.onclick = () => showGroupCard(x.group.id, () => showProfile(u));
       secGroups.body.appendChild(t);
     });
     secGroups.show();

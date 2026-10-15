@@ -153,8 +153,8 @@ async function openNews() {
       head.append(el('b', null, i.group), el('span', 'news-kind ' + i.kind, i.kind === 'shout' ? 'Shout' : 'Wall post'));
       if (i.kind === 'shout' && seenBefore[i.gid] !== i.at) head.appendChild(el('span', 'news-new', 'NEW'));
       main.append(head, el('div', 'news-body', i.body), el('div', 'news-meta', [i.who && 'by ' + i.who, newsAgo(i.at)].filter(Boolean).join(' · ')));
-      const open = el('button', 'pill', 'Open group');
-      open.onclick = () => window.api.openLink(`https://www.roblox.com/communities/${i.gid}`);
+      const open = el('button', 'pill', 'View group');
+      open.onclick = () => showGroupCard(i.gid);
       card.append(im, main, open);
       list.appendChild(card);
     });
