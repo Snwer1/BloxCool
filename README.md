@@ -35,7 +35,7 @@ Short version, full detail in [SECURITY.md](SECURITY.md):
 - Your Roblox login (cookie) is stored only on your PC, encrypted by Windows when available, and is only sent to `*.roblox.com`.
 - Your password is never seen by the app. The login window is Roblox's own page.
 - The app talks to a small set of hosts (listed in SECURITY.md). There is no ad code or third-party analytics. The profile server does keep a list of the Roblox IDs and usernames of people who open BloxCool, with the first and last time seen, so the owner can moderate. See SECURITY.md.
-- The BloxCool profile server stores the look you choose (name, banner, picture, effects) and that list of IDs and usernames, nothing else. You can hide other players' custom pictures in Settings. The server's code is not published here.
+- The BloxCool profile server stores the look you choose (name, banner, picture, effects) and that list of IDs and usernames, nothing else. Other people only see a custom picture after an automatic safety check approves it (if the check is switched off, pictures stay hidden from everyone but you), and you can report a player's pictures from their profile. You can also hide other players' custom pictures in Settings. The server's code is not published here.
 
 ## Layout of the code
 

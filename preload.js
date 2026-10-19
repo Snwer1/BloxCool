@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
   grantsGet: () => ipcRenderer.invoke('config:grants'),
   lookGet: (ids) => ipcRenderer.invoke('look:get', ids),
   groupSave: () => ipcRenderer.invoke('group:save'),
+  reportProfile: (id) => ipcRenderer.invoke('group:report', id),
   accountsList: () => ipcRenderer.invoke('accounts:list'),
   accountsSwitch: (id) => ipcRenderer.invoke('accounts:switch', id),
   accountsRemove: (id) => ipcRenderer.invoke('accounts:remove', id),

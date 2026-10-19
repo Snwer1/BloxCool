@@ -118,7 +118,9 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.35); }
 }
 .hrow::-webkit-scrollbar { display: none; }
 /* Game sections wrap into a grid and the page scrolls down (like the Roblox app) */
-.hrow.games { flex-wrap: wrap; overflow: visible; }
+/* Recommended games fill the whole width: on a big or fullscreen window the cards grow instead of leaving an empty strip on the right */
+.hrow.games { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(250px, 13.5vw, 340px), 1fr)); gap: 14px; overflow: visible; }
+.hrow.games > .card.wide { width: auto; min-width: 0; }
 
 /* ---------- Friends ---------- */
 #friends { min-width: 0; }
@@ -1092,7 +1094,10 @@ body.fb-dragging:after { content: "Drop your picture"; position: fixed; inset: 1
 
 /* ---------- Layout editor + hidden parts ---------- */
 .lh-art #artwrap, .lh-text #ptext, .lh-ctl #pctl, .lh-prog #pprog, .lh-vol #pvol,
-.lh-bell #bell, .lh-status #miniStatus, .lh-name #miniProfile { display: none !important; }
+.lh-bell #bell, .lh-status #miniStatus, .lh-name #miniProfile, .lh-robux #miniRobux { display: none !important; }
+#miniRobux { display: inline-flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 700; padding: 6px 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); white-space: nowrap; }
+#miniRobux[hidden] { display: none !important; }
+#miniRobux svg { width: 16px; height: 16px; flex: none; }
 .lay-frame { display: flex; flex-direction: column; gap: 10px; max-width: 640px; padding: 12px; border-radius: 14px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); }
 .lay-row { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px; padding-right: 44px; border-radius: 10px; background: rgba(255,255,255,.06); border: 1px dashed rgba(255,255,255,.18); }
 .lay-row.over { border-color: var(--accent); background: rgba(0,162,255,.12); }
@@ -1193,6 +1198,11 @@ body.fb-dragging:after { content: "Drop your picture"; position: fixed; inset: 1
 #friends { display: flex; flex-direction: column; min-height: 0; }
 #friends .hrow { flex: 1; min-height: 0; flex-wrap: wrap; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; align-content: flex-start; margin: 0; padding: 10px 12px; row-gap: 22px; }
 #friends[data-form="strip"] .hrow { flex: none; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
+/* Like the Roblox home page: friends are ONE row and you scroll sideways (mouse wheel, trackpad or drag) */
+#friends .hrow { flex: none; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; cursor: grab; }
+#friends .hrow.dragging { cursor: grabbing; }
+#friends .hrow.dragging .friend { pointer-events: none; }
+#friends .hrow > .friend, #friends .hrow > .fadd { flex: none; }
 
 /* ---------- News ---------- */
 #newsView { position: absolute; left: 76px; right: 0; top: 0; bottom: 0; z-index: 2; display: none; padding: 36px 28px 24px 12px; overflow-y: auto; overflow-x: hidden; }
@@ -1217,3 +1227,36 @@ body.fb-dragging:after { content: "Drop your picture"; position: fixed; inset: 1
 .pill:disabled { opacity: 0.5; cursor: not-allowed; }
 
 #liftednotice .ban-box h1 { color: #5ee59a; }
+
+/* ---------- tutorial ---------- */
+.tut { position: fixed; inset: 0; z-index: 9000; animation: tutIn 0.25s ease; }
+.tut.out { opacity: 0; transition: opacity 0.25s; pointer-events: none; }
+.tut-spot { position: fixed; border-radius: 14px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.72), 0 0 0 2px var(--accent), 0 0 24px var(--accent); transition: all 0.3s ease; pointer-events: none; }
+.tut.center { background: rgba(0, 0, 0, 0.72); }
+.tut-card { position: fixed; width: 340px; max-width: calc(100vw - 24px); box-sizing: border-box; padding: 18px 20px; border-radius: 16px; background: rgba(24, 26, 32, 0.96); color: #fff; border: 1px solid rgba(255, 255, 255, 0.14); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55); transition: left 0.3s ease, top 0.3s ease; }
+.tut.center .tut-card { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.tut-card h2 { margin: 0 0 6px; font-size: 20px; }
+.tut-card p { margin: 0 0 14px; font-size: 14px; line-height: 1.5; color: rgba(255, 255, 255, 0.82); }
+.tut-dots { display: flex; gap: 6px; margin-bottom: 14px; }
+.tut-dots i { width: 7px; height: 7px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); }
+.tut-dots i.on { background: var(--accent); width: 18px; border-radius: 4px; }
+.tut-row { display: flex; align-items: center; gap: 8px; }
+.tut-gap { flex: 1; }
+@keyframes tutIn { from { opacity: 0; } to { opacity: 1; } }
+
+.tut.live { pointer-events: none; }
+.tut.live .tut-card { pointer-events: auto; }
+.tut-hint { margin: -4px 0 12px; font-size: 13px; font-weight: 700; color: var(--accent); animation: tutPulse 1.2s ease-in-out infinite; }
+@keyframes tutPulse { 50% { opacity: 0.45; } }
+
+/* Friends with a big effect (like the spikes) get room around their picture, so the row does not cut the effect flat.
+   The effect itself is unchanged. */
+/* room for effects above/below the pictures WITHOUT using extra layout height: the row reaches up over the (empty) space around it */
+#friends { overflow: visible; }
+#friends .hrow { padding-top: 56px; padding-bottom: 20px; margin-top: -40px; margin-bottom: -6px; position: relative; }
+#friends > h2, #friends > .sechead { position: relative; z-index: 1; pointer-events: none; }
+#mini { position: relative; z-index: 3; }
+/* "+N / Show all" tile in a profile's Communities */
+.ptile .addcircle { width: 84px; height: 84px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; background: rgba(255, 255, 255, 0.12); }
+
+.news-title { font-weight: 700; font-size: 15px; }

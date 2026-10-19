@@ -7,7 +7,7 @@ const LAYOUT_NAMES = { player: 'Music player', friends: 'Friends', mini: 'Mini p
 const LAYOUT_PARTS = [
   ['player', 'art', 'Album cover'], ['player', 'text', 'Song title and artist'], ['player', 'ctl', 'Play, previous and next buttons'],
   ['player', 'prog', 'Progress bar'], ['player', 'vol', 'Volume'],
-  ['mini', 'name', 'Your name and picture'], ['mini', 'status', 'Online status'], ['mini', 'bell', 'Notifications bell'],
+  ['mini', 'name', 'Your name and picture'], ['mini', 'status', 'Online status'], ['mini', 'bell', 'Notifications bell'], ['mini', 'robux', 'Robux counter'],
 ];
 const sameSet = (a, b) => Array.isArray(a) && a.length === b.length && b.every((x) => a.includes(x)) && new Set(a).size === a.length;
 
@@ -59,7 +59,7 @@ function layoutArrange(L, els, top) {
   const form = (k) => (vis.includes(k) ? els[k].dataset.form : '');
   const mini1 = 76 * mz;
   const hh = (k, f) =>
-    k === 'player' ? (f === 'strip' ? 90 : 250) : k === 'friends' ? (f === 'tall' ? 2 * (fs + 36) + 64 : fs + 56) : f === 'tall' ? Math.round(280 * mz) : mini1;
+    k === 'player' ? (f === 'strip' ? 90 : 250) : k === 'friends' ? (f === 'tall' ? 2 * (fs + 36) + 64 : fs + 96) : f === 'tall' ? Math.round(280 * mz) : mini1;
   let need = 0;
   if (vis.length === 3) need = Math.max(hh(vis[0], 'tall'), hh(vis[1], 'wide') + 8 + hh(vis[2], 'strip'));
   else vis.forEach((k) => (need = Math.max(need, hh(k, form(k)))));

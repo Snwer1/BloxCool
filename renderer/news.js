@@ -16,6 +16,26 @@ const newsAgo = (iso) => {
   return new Date(t).toLocaleDateString();
 };
 
+// Announcements are the newer long posts (they replace the shout on some communities). Read the latest one of a group.
+// The shape of the answer is not documented, so every field is read carefully and anything unexpected is skipped.
+function newsAnnouncement(g, icons, r) {
+  const arr = !r ? [] : Array.isArray(r) ? r : Array.isArray(r.data) ? r.data : [r];
+  const out = [];
+  for (const e of arr) {
+    if (!e || typeof e !== 'object') continue;
+    const m = e.message || {};
+    const c = m.content || e.content || {};
+    const body = String(c.plainText || c.text || (typeof m === 'string' ? m : '') || m.plainText || e.description || '').trim();
+    const title = String(e.name || e.title || m.title || '').trim();
+    if (!body && !title) continue;
+    const at = e.updatedAt || e.updated || e.createdAt || e.created || m.createdAt || m.created || '';
+    const who = (e.creator && (e.creator.displayName || e.creator.username || e.creator.name)) || (e.author && (e.author.displayName || e.author.username)) || '';
+    out.push({ kind: 'announcement', gid: g.id, group: g.name, icon: icons.get(g.id) || '', title, body, who, at: String(at), key: 'a' + g.id + ':' + String(e.id || at || body.slice(0, 20)) });
+  }
+  return out;
+}
+const newsSeenKey = (i) => (i.kind === 'announcement' ? 'a' : '') + i.gid;
+
 // run `fn` over `list` with a few requests at a time
 async function newsPool(list, n, fn) {
   let i = 0;
@@ -33,7 +53,24 @@ async function newsPool(list, n, fn) {
   );
 }
 
+// last result is kept on disk so News opens instantly and refreshes behind the scenes
+const newsCacheKey = () => 'bc.news.' + S.userId;
+function newsHydrate() {
+  if (news.items.length || !S.userId) return;
+  try {
+    const c = JSON.parse(localStorage.getItem(newsCacheKey()) || 'null');
+    if (c && Array.isArray(c.items)) {
+      news.items = c.items;
+      news.at = c.at || 1;
+      news.groups = c.groups || 0;
+      news.annTried = 1;
+      news.annAnswered = 1;
+    }
+  } catch { /* no cache */ }
+}
+
 async function newsLoad(force) {
+  newsHydrate();
   if (!S.userId) return { error: 'login' };
   if (!force && news.items.length && Date.now() - news.at < NEWS_TTL) return { ok: true };
   if (news.loading) return news.loading;
@@ -42,20 +79,31 @@ async function newsLoad(force) {
     const groups = ((r && r.data) || []).map((x) => x.group).filter(Boolean).slice(0, 60);
     if (!r) return { error: 'net' };
     const icons = new Map();
-    for (let i = 0; i < groups.length; i += 40) {
-      const ids = groups.slice(i, i + 40).map((g) => g.id).join(',');
-      const th = await J(`https://thumbnails.roblox.com/v1/groups/icons?groupIds=${ids}&size=150x150&format=Png&isCircular=false`).catch(() => null);
-      ((th && th.data) || []).forEach((d) => icons.set(d.targetId, d.imageUrl));
-    }
+    await Promise.all(
+      Array.from({ length: Math.ceil(groups.length / 40) }, async (_, k) => {
+        const ids = groups.slice(k * 40, k * 40 + 40).map((g) => g.id).join(',');
+        const th = await J(`https://thumbnails.roblox.com/v1/groups/icons?groupIds=${ids}&size=150x150&format=Png&isCircular=false`).catch(() => null);
+        ((th && th.data) || []).forEach((d) => icons.set(d.targetId, d.imageUrl));
+      })
+    );
     const items = [];
-    await newsPool(groups, 6, async (g) => {
-      const info = await J(`https://groups.roblox.com/v1/groups/${g.id}`).catch(() => null);
+    news.annTried = 0;
+    news.annAnswered = 0;
+    await newsPool(groups, 16, async (g) => {
+      const [info, ann, w] = await Promise.all([
+        J(`https://groups.roblox.com/v1/groups/${g.id}`).catch(() => null),
+        J(`https://groups.roblox.com/v1/groups/${g.id}/announcements/latest`).catch(() => null),
+        news.walls ? JA(`https://groups.roblox.com/v2/groups/${g.id}/wall/posts?limit=3&sortOrder=Desc`).catch(() => null) : null,
+      ]);
       const sh = info && info.shout;
       if (sh && sh.body) {
         items.push({ kind: 'shout', gid: g.id, group: g.name, icon: icons.get(g.id) || '', body: sh.body, who: (sh.poster && (sh.poster.displayName || sh.poster.username)) || '', at: sh.updated || sh.created || '', key: g.id + ':' + (sh.updated || sh.created) });
       }
+      news.annTried = (news.annTried || 0) + 1;
+      const annItems = newsAnnouncement(g, icons, ann);
+      if (ann) news.annAnswered = (news.annAnswered || 0) + 1;
+      items.push(...annItems);
       if (news.walls) {
-        const w = await JA(`https://groups.roblox.com/v2/groups/${g.id}/wall/posts?limit=3&sortOrder=Desc`).catch(() => null);
         ((w && w.data) || []).forEach((p) => {
           if (!p.body) return;
           const u = p.poster && p.poster.user;
@@ -63,10 +111,11 @@ async function newsLoad(force) {
         });
       }
     });
-    items.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    items.sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
     news.items = items;
     news.at = Date.now();
     news.groups = groups.length;
+    try { localStorage.setItem(newsCacheKey(), JSON.stringify({ at: news.at, items, groups: groups.length })); } catch { /* full */ }
     return { ok: true };
   })();
   try {
@@ -78,7 +127,7 @@ async function newsLoad(force) {
 
 function newsUnreadCount() {
   const seen = S.newsSeen || {};
-  return news.items.filter((i) => i.kind === 'shout' && seen[i.gid] !== i.at).length;
+  return news.items.filter((i) => (i.kind === 'shout' || i.kind === 'announcement') && seen[newsSeenKey(i)] !== i.at).length;
 }
 
 function newsBadge() {
@@ -105,11 +154,11 @@ async function openNews() {
   const token = ++news.token;
   v.replaceChildren();
   v.appendChild(el('h1', null, 'News'));
-  const sub = el('div', 'set-desc', 'Shouts and wall posts from every group you are in, newest first.');
+  const sub = el('div', 'set-desc', 'Announcements, shouts and wall posts from every group you are in, newest first.');
   v.appendChild(sub);
   const bar = el('div', 'news-bar');
   const pills = el('div', 'set-pills');
-  [['all', 'Everything'], ['shout', 'Shouts'], ['wall', 'Wall posts']].forEach(([k, l]) => {
+  [['all', 'Everything'], ['announcement', 'Announcements'], ['shout', 'Shouts'], ['wall', 'Wall posts']].forEach(([k, l]) => {
     const p = el('button', 'pill' + (news.type === k ? ' active' : ''), l);
     p.onclick = () => {
       news.type = k;
@@ -134,30 +183,39 @@ async function openNews() {
   const list = el('div', 'news-list');
   v.appendChild(list);
 
+  newsHydrate();
   const seenBefore = { ...(S.newsSeen || {}) };
   function paint() {
     if (token !== news.token) return;
     list.replaceChildren();
-    const items = news.items.filter((i) => (news.type === 'all' || i.kind === news.type) && (!news.q || (i.group + ' ' + i.body + ' ' + i.who).toLowerCase().includes(news.q)));
+    const items = news.items.filter((i) => (news.type === 'all' || i.kind === news.type) && (!news.q || (i.group + ' ' + (i.title || '') + ' ' + i.body + ' ' + i.who).toLowerCase().includes(news.q)));
     if (!items.length) {
-      list.appendChild(el('div', 'empty', news.items.length ? 'Nothing matches that.' : 'None of your groups have a shout or wall post right now.'));
+      list.appendChild(el('div', 'empty', news.items.length ? 'Nothing matches that.' : 'None of your groups have an announcement, shout or wall post right now.'));
+      annNote();
       return;
     }
     items.forEach((i) => {
-      const card = el('div', 'news-card' + (i.kind === 'shout' && seenBefore[i.gid] !== i.at ? ' fresh' : ''));
+      const card = el('div', 'news-card' + ((i.kind === 'shout' || i.kind === 'announcement') && seenBefore[newsSeenKey(i)] !== i.at ? ' fresh' : ''));
       const im = el('img', 'news-icon');
       im.alt = '';
       if (i.icon) im.src = i.icon;
       const main = el('div', 'news-main');
       const head = el('div', 'news-head');
-      head.append(el('b', null, i.group), el('span', 'news-kind ' + i.kind, i.kind === 'shout' ? 'Shout' : 'Wall post'));
-      if (i.kind === 'shout' && seenBefore[i.gid] !== i.at) head.appendChild(el('span', 'news-new', 'NEW'));
-      main.append(head, el('div', 'news-body', i.body), el('div', 'news-meta', [i.who && 'by ' + i.who, newsAgo(i.at)].filter(Boolean).join(' · ')));
+      head.append(el('b', null, i.group), el('span', 'news-kind ' + i.kind, i.kind === 'shout' ? 'Shout' : i.kind === 'announcement' ? 'Announcement' : 'Wall post'));
+      if ((i.kind === 'shout' || i.kind === 'announcement') && seenBefore[newsSeenKey(i)] !== i.at) head.appendChild(el('span', 'news-new', 'NEW'));
+      if (i.title) main.append(head, el('div', 'news-title', i.title));
+      else main.append(head);
+      main.append(el('div', 'news-body', i.body), el('div', 'news-meta', [i.who && 'by ' + i.who, newsAgo(i.at)].filter(Boolean).join(' · ')));
       const open = el('button', 'pill', 'View group');
       open.onclick = () => showGroupCard(i.gid);
       card.append(im, main, open);
       list.appendChild(card);
     });
+    annNote();
+  }
+  // be honest when Roblox did not give any announcement back (the feature is new and its address is not documented)
+  function annNote() {
+    if (news.annTried > 0 && news.annAnswered === 0) list.appendChild(el('div', 'news-meta', "Announcements couldn't be loaded from Roblox right now, so only shouts and wall posts are shown."));
   }
   async function run(force) {
     const lk = typeof testAccLock === 'function' ? testAccLock('news') : null;
@@ -180,7 +238,7 @@ async function openNews() {
     paint();
     // everything shown now counts as read
     const seen = { ...(S.newsSeen || {}) };
-    news.items.filter((i) => i.kind === 'shout').forEach((i) => (seen[i.gid] = i.at));
+    news.items.filter((i) => i.kind === 'shout' || i.kind === 'announcement').forEach((i) => (seen[newsSeenKey(i)] = i.at));
     S = await window.api.setSettings({ newsSeen: seen });
     newsBadge();
   }

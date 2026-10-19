@@ -22,6 +22,10 @@ const DEFAULTS = {
   spotifyConnected: false,
   lockSeen: {}, // look-lock notices the player already read: { userId: lockedAt }
   restricted: {}, // what each account was last under, so a lifted ban/lock can be announced: { userId: { ban, lock } }
+  showRobux: true, // false = no Robux counter on the home page
+  startMaximized: true, // true = the window opens maximized (filling the screen, taskbar still visible)
+  autoScale: true, // true = the whole app grows with the window (fullscreen / big monitors)
+  tutorialDone: false, // true once the first-launch tutorial was finished or skipped
   showCustomImages: true, // false = hide other people's custom pictures (banners, backgrounds, profile pictures)
   musicOff: false, // true = no music player at all
   musicSource: 'pc', // 'pc' = Windows media session (free) | 'spotify' = Spotify Web API (Premium)
@@ -816,6 +820,7 @@ function registerIpc() {
         if (key in patch) settings[key] = patch[key];
       }
       saveSettings();
+      if ('autoScale' in patch) autoZoom(BrowserWindow.fromWebContents(_e.sender));
     }
     return settings;
   });
@@ -1025,11 +1030,21 @@ function registerIpc() {
       return { ok: false, error: String((e && e.message) || e) };
     }
   });
+  ipcMain.handle('group:report', async (_e, id) => {
+    try {
+      if (!/^\d{1,15}$/.test(String(id))) throw new Error('bad id');
+      if (!settings.userId) throw new Error('Log in or set your username first');
+      await groupFetch('POST', '/report/' + id, {});
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
   ipcMain.handle('group:save', async () => {
     try {
       if (!settings.userId) throw new Error('Log in or set your username first');
       const j = await groupFetch('PUT', '/profile/' + settings.userId, settings.profileCustom || {});
-      return { ok: true, locked: !!(j && j.locked), lockUntil: Number(j && j.lockUntil) || 0 };
+      return { ok: true, review: (j && j.review) || {}, checking: !!(j && j.checking), blockedUntil: Number(j && j.blockedUntil) || 0, locked: !!(j && j.locked), lockUntil: Number(j && j.lockUntil) || 0 };
     } catch (e) {
       return { ok: false, error: String((e && e.message) || e) };
     }
@@ -1384,12 +1399,27 @@ function registerIpc() {
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
+// Makes everything bigger when the window is bigger than the normal size (fullscreen, big monitors).
+// 1280x780 and smaller stay at 100%. It is measured here, outside the page, so it can't feed back into itself.
+function autoZoom(win) {
+  if (!win || win.isDestroyed()) return;
+  let z = 1;
+  if (settings.autoScale !== false) {
+    const [w, h] = win.getContentSize();
+    const raw = Math.min(w / 1280, h / 780);
+    z = Math.max(1, Math.min(1.4, 1 + (raw - 1) * 0.8));
+    z = Math.round(z * 20) / 20;
+  }
+  if (Math.abs(win.webContents.getZoomFactor() - z) > 0.001) win.webContents.setZoomFactor(z);
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 780,
     minWidth: 900,
     minHeight: 600,
+    show: false, // shown once it is ready, already at the right size (no jump)
     frame: false,
     backgroundColor: '#0b0d12',
     title: 'BloxCool',
@@ -1405,6 +1435,13 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.once('ready-to-show', () => {
+    if (settings.startMaximized !== false) win.maximize();
+    win.show();
+  });
+  setTimeout(() => { if (!win.isDestroyed() && !win.isVisible()) win.show(); }, 8000); // safety: never stay hidden
+  win.on('resize', () => autoZoom(win));
+  win.webContents.on('did-finish-load', () => autoZoom(win));
 }
 
 app.whenReady().then(() => {

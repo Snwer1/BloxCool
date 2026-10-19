@@ -97,7 +97,7 @@ async function universeOf(placeId) {
 async function hydrateUniverses(ids) {
   const map = new Map();
   ids = [...new Set(ids.filter(Boolean))];
-  for (const part of chunk(ids, 50)) {
+  await Promise.all(chunk(ids, 50).map(async (part) => {
     try {
       const [details, votes] = await Promise.all([
         J(`https://games.roblox.com/v1/games?universeIds=${part.join(',')}`),
@@ -119,7 +119,7 @@ async function hydrateUniverses(ids) {
     } catch (e) {
       console.warn('hydrate failed', e);
     }
-  }
+  }));
   return map;
 }
 
@@ -1021,7 +1021,31 @@ const ownerReady = (async () => {
   paintMiniBadge();
 })();
 
+// Your own Robux balance (only you can see it: it is read with your login, nothing is stored or sent anywhere)
+let robuxToken = 0;
+async function loadRobux() {
+  const box = $('#miniRobux');
+  if (!box) return;
+  const my = ++robuxToken;
+  if (!S.loggedIn || !S.userId || S.showRobux === false || (typeof onTest === 'function' && onTest())) {
+    box.hidden = true;
+    return;
+  }
+  try {
+    const r = await JA(`https://economy.roblox.com/v1/users/${S.userId}/currency`);
+    if (my !== robuxToken) return;
+    if (typeof r.robux !== 'number') throw new Error('no balance');
+    box.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 2.5l8.5 4.9v9.2L12 21.5l-8.5-4.9V7.4z"/><path d="M9 9h4.2a2 2 0 010 4H9m3 0l3 3.5M9 8v8"/></svg>';
+    box.appendChild(document.createTextNode(r.robux.toLocaleString()));
+    box.title = 'Your Robux: ' + r.robux.toLocaleString();
+    box.hidden = false;
+  } catch {
+    if (my === robuxToken) box.hidden = true; // not logged in on Roblox, or Roblox did not answer: show nothing instead of a wrong number
+  }
+}
+
 async function loadProfile() {
+  loadRobux();
   const mine = S.userId ? lookOf(S.userId) || {} : {};
   $('#miniName').textContent = mine.nick || S.username || 'Guest';
   if (typeof testAccTag === 'function') testAccTag();
@@ -1136,17 +1160,40 @@ function applyFriendLimit() {
     row.appendChild(b);
   }
 }
-// in the thin one-row shape the mouse wheel scrolls sideways
+// friends are one row: the mouse wheel scrolls it sideways, and you can also drag it
 document.addEventListener(
   'wheel',
   (e) => {
-    const row = e.target.closest && e.target.closest('#friends[data-form="strip"] #friendsRow');
+    const row = e.target.closest && e.target.closest('#friends #friendsRow');
     if (!row || row.scrollWidth <= row.clientWidth) return;
     row.scrollLeft += e.deltaY || e.deltaX;
     e.preventDefault();
   },
   { passive: false }
 );
+(function friendsDrag() {
+  let row = null, down = false, moved = false, x0 = 0, left0 = 0;
+  document.addEventListener('mousedown', (e) => {
+    const r = e.target.closest && e.target.closest('#friends #friendsRow');
+    if (!r || e.button !== 0) return;
+    row = r; down = true; moved = false; x0 = e.clientX; left0 = r.scrollLeft;
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!down || !row) return;
+    const dx = e.clientX - x0;
+    if (Math.abs(dx) > 5) { moved = true; row.classList.add('dragging'); }
+    if (moved) row.scrollLeft = left0 - dx;
+  });
+  window.addEventListener('mouseup', () => {
+    if (row) row.classList.remove('dragging');
+    down = false; row = null;
+  });
+  // a drag must not open the friend you let go on
+  document.addEventListener('click', (e) => {
+    if (moved && e.target.closest && e.target.closest('#friends #friendsRow')) { e.stopPropagation(); e.preventDefault(); }
+    moved = false;
+  }, true);
+})();
 function openAllFriends() {
   const ov = el('div', 'fpanel');
   const box = el('div', 'fpbox');
@@ -1587,108 +1634,23 @@ async function loadHome() {
     ['explore-api', () => call(`https://apis.roblox.com/explore-api/v1/get-sorts?sessionId=${sid}&device=computer&country=all`)],
   ];
   let sorts = [];
-  for (const [label, attempt] of attempts) {
-    try {
-      const j = await attempt();
-      sorts = parseSorts(j);
-      homeDebug.tried.push({ label, ok: true, topKeys: Object.keys(j || {}).slice(0, 12), sorts: sorts.length });
-      if (sorts.length) break;
-    } catch (e) {
-      homeDebug.tried.push({ label, ok: false, error: String((e && e.message) || e) });
-    }
-  }
-  homeSorts = sorts;
-  homeDebug.sorts = sorts.map((s) => `${s.name} (${s.ids.length})`);
-  if (!sorts.length) return null;
-
-  const cont = sorts.find((s) => /continue|продолж/i.test(s.name));
-  const rec =
-    sorts.find((s) => /recommend|рекоменд/i.test(s.name)) || sorts.find((s) => s !== cont && s.ids.length >= 6);
-  const contIds = cont ? cont.ids.slice(0, 30) : [];
-  const recIds = rec ? rec.ids.slice(0, 60) : [];
-  homeDebug.picked = { continue: cont && cont.name, recommended: rec && rec.name };
-
-  const map = await hydrateUniverses([...contIds, ...recIds]);
-  await loadImages([...map.keys()]);
-  homeContinue = contIds.map((id) => map.get(id)).filter(Boolean);
-  const recGames = recIds.map((id) => map.get(id)).filter(Boolean);
-  return recGames.length ? recGames : null;
-}
-
-async function refreshRecommended() {
-  const row = $('#recRow');
-  row.replaceChildren(el('div', 'empty', 'Loading games…'));
-  const home = await loadHome();
-  if (!home) toast("Couldn't load your personal games from Roblox, showing popular ones");
-  recommended = home || (await fetchRecommended());
-  await loadImages(recommended.map((g) => g.universeId));
-  row.replaceChildren();
-  if (!recommended.length) {
-    row.appendChild(el('div', 'empty', "Couldn't reach Roblox. Check your internet and use More → Refresh."));
-    return;
-  }
-  recommended.forEach((g) => row.appendChild(makeCard(g, true)));
-}
-
-async function refreshAll() {
-  toast('Refreshing…');
-  await Promise.all([loadProfile(), loadFriends(), refreshRecommended()]);
-  await refreshContinue();
-}
-
-async function reloadMedia() {
-  media = await window.api.scanMedia();
-  bg.init();
-  player.init(media.music);
-  toast(`${media.backgrounds.length} backgrounds · ${media.music.length} songs`);
-}
-
-// ============================================================================
-// Boot
-// ============================================================================
-// ============================================================================
-// Views + Settings (Background)
-// ============================================================================
-let view = 'home';
-let profileDraft = null; // unsaved profile edits survive re-renders
-let saveBar = null;
-let settingsGuard = null; // returns true if leaving should be blocked (unsaved changes)
-let profileTab = 'pics'; // which tab of My profile is open
-let settingsPage = null; // null = the settings menu, otherwise the open sub-page
-const navBtns = {};
-
-
-// ============================================================================
-// Charts page
-// ============================================================================
-let chartData = null; // [{ name, games: [...] }]
-let chartDebug = {};
-let chartIndex = 0;
-let chartLoading = false;
-
-async function loadCharts() {
-  chartDebug = { tried: [] };
-  const call = S.loggedIn && !onTest() ? JA : J;
-  const sid = uuid4();
-  let sorts = [];
-  // Home-page lists (Continue, Recommended, Friends...) are NOT charts.
-  const notChart = /continue|recommend|favorite|friend|recent|для вас|продолж/i;
-  const attempts = [];
-  for (const ctx of ['Charts', 'GameCharts', 'ChartsPage']) {
-    attempts.push([`omni-${ctx}`, () => call('https://apis.roblox.com/discovery-api/omni-recommendation', { method: 'POST', body: { pageType: ctx, sessionId: sid } })]);
-    attempts.push([`explore-${ctx}`, () => call(`https://apis.roblox.com/explore-api/v1/get-sorts?sessionId=${sid}&device=computer&country=all&sortsPageContext=${ctx}`)]);
-  }
-  for (const [label, attempt] of attempts) {
-    try {
-      const j = await attempt();
-      const all = parseSorts(j);
-      sorts = all.filter((x) => !notChart.test(x.name) && x.ids.length >= 3);
-      chartDebug.tried.push({ label, ok: true, topKeys: Object.keys(j || {}).slice(0, 12), sortNames: all.map((x) => x.name), kept: sorts.length });
-      if (sorts.length) break;
-    } catch (e) {
-      chartDebug.tried.push({ label, ok: false, error: String((e && e.message) || e) });
-    }
-  }
+  // all the ways to ask run at once; the first one that really has charts wins
+  await new Promise((resolve) => {
+    let left = attempts.length;
+    const done = () => { if (--left <= 0) resolve(); };
+    attempts.forEach(([label, attempt]) => {
+      attempt().then((j) => {
+        const all = parseSorts(j);
+        const kept = all.filter((x) => !notChart.test(x.name) && x.ids.length >= 3);
+        chartDebug.tried.push({ label, ok: true, topKeys: Object.keys(j || {}).slice(0, 12), sortNames: all.map((x) => x.name), kept: kept.length });
+        if (kept.length && !sorts.length) { sorts = kept; resolve(); }
+        done();
+      }).catch((e) => {
+        chartDebug.tried.push({ label, ok: false, error: String((e && e.message) || e) });
+        done();
+      });
+    });
+  });
 
   // The Charts page loads each chart by its own id.
   if (!sorts.length) {
@@ -1719,10 +1681,13 @@ async function loadCharts() {
   sorts = sorts.slice(0, 12);
   if (sorts.length) {
     const map = await hydrateUniverses(sorts.flatMap((x) => x.ids.slice(0, 50)));
-    await loadImages([...map.keys()]);
-    return sorts
+    const res = sorts
       .map((x) => ({ name: x.name || 'Games', games: x.ids.slice(0, 50).map((id) => map.get(id)).filter(Boolean) }))
       .filter((x) => x.games.length);
+    // pictures for the first chart are awaited, the other charts fill in while you look
+    await loadImages(res[0] ? res[0].games.map((g) => g.universeId) : []);
+    loadImages(res.slice(1).flatMap((c) => c.games.map((g) => g.universeId))).then(() => { if (view === 'charts') renderCharts(); });
+    return res;
   }
 
   // Public fallback: classic game sorts
@@ -2522,7 +2487,7 @@ async function openCharts() {
   chartLoading = true;
   renderCharts();
   try {
-    chartData = await loadCharts();
+    chartData = await chartsOnce();
   } catch (e) {
     chartData = [];
     chartDebug.error = String((e && e.message) || e);
@@ -2967,6 +2932,17 @@ function renderSettings() {
   }
   acc.appendChild(accActions);
   pages.account.push(acc);
+  {
+    const tut = el('div', 'set-sec');
+    tut.appendChild(el('h3', null, 'Tutorial'));
+    tut.appendChild(el('div', 'set-desc', 'A hands-on tour: you click through what BloxCool adds (settings, profile look, backgrounds, news, friends, music).'));
+    const ta = el('div', 'set-actions');
+    const tb = el('button', 'pill primary', 'Show the tutorial');
+    tb.onclick = () => startTutorial();
+    ta.appendChild(tb);
+    tut.appendChild(ta);
+    pages.account.push(tut);
+  }
 
   // ----- My profile (look + group server) -----
   const pl = el('div', 'set-sec');
@@ -3218,7 +3194,12 @@ function renderSettings() {
     lastLookError = r.ok ? '' : r.error;
     if (r.ok) {
       looks[String(S.userId)] = { look: { ...draft }, at: Date.now() };
-      toast(r.locked ? 'Your look is locked, so nothing was changed. ' + untilText(r.lockUntil, 'Locked') : 'Saved. Everyone using BloxCool can see it now.');
+      const waiting = Object.values(r.review || {}).some((v) => v !== 'approved');
+      if (r.locked) toast('Your look is locked, so nothing was changed. ' + untilText(r.lockUntil, 'Locked'));
+      else if (r.blockedUntil) toast("Saved, but your pictures were left out. Too many people reported them, so you can't upload pictures until " + new Date(r.blockedUntil).toLocaleString() + '.');
+      else toast(!waiting ? 'Saved. Everyone using BloxCool can see it now.'
+        : r.checking ? 'Saved. Your pictures are being checked first, others will see them in a minute.'
+        : 'Saved. Your pictures stay hidden from others until the safety check is switched on.');
       loadProfile();
     } else toast("Saved on this PC, but couldn't share it: " + r.error);
     profileDraft = null;
@@ -3372,7 +3353,6 @@ function renderSettings() {
     row.append(txt, sw);
     mus.appendChild(row);
   }
-  mus.appendChild(el('h3', null, 'Music'));
   mus.appendChild(el('h3', null, 'Music'));
   {
     const row = el('div', 'opt-row');
@@ -3592,6 +3572,51 @@ function renderSettings() {
   row.append(el('span', null, 'Darkness'), slider, val);
   dark.appendChild(row);
   pages.appearance.push(dark);
+  {
+    const sc = el('div', 'set-sec');
+    sc.appendChild(el('h3', null, 'Window and home page'));
+    const row = el('div', 'opt-row');
+    const txt = el('div', 'opt-txt');
+    txt.append(el('b', null, 'Grow with the window'), el('span', null, 'Makes everything bigger when the window is bigger (fullscreen, large monitors). Turn off to keep the normal size.'));
+    const sw = el('button', 'switch' + (S.autoScale === false ? '' : ' on'));
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(S.autoScale !== false));
+    sw.appendChild(el('i'));
+    sw.onclick = async () => {
+      S = await window.api.setSettings({ autoScale: S.autoScale === false });
+      renderSettings();
+    };
+    row.append(txt, sw);
+    sc.appendChild(row);
+    const row3 = el('div', 'opt-row');
+    const txt3 = el('div', 'opt-txt');
+    txt3.append(el('b', null, 'Show my Robux'), el('span', null, 'A small Robux counter on the home page, only visible to you. Turn off if you stream or share your screen.'));
+    const sw3 = el('button', 'switch' + (S.showRobux === false ? '' : ' on'));
+    sw3.setAttribute('role', 'switch');
+    sw3.setAttribute('aria-checked', String(S.showRobux !== false));
+    sw3.appendChild(el('i'));
+    sw3.onclick = async () => {
+      S = await window.api.setSettings({ showRobux: S.showRobux === false });
+      loadRobux();
+      renderSettings();
+    };
+    row3.append(txt3, sw3);
+    sc.appendChild(row3);
+    const row2 = el('div', 'opt-row');
+    const txt2 = el('div', 'opt-txt');
+    txt2.append(el('b', null, 'Open maximized'), el('span', null, 'The app starts filling the screen (the taskbar stays visible). Takes effect the next time you open it.'));
+    const sw2 = el('button', 'switch' + (S.startMaximized === false ? '' : ' on'));
+    sw2.setAttribute('role', 'switch');
+    sw2.setAttribute('aria-checked', String(S.startMaximized !== false));
+    sw2.appendChild(el('i'));
+    sw2.onclick = async () => {
+      S = await window.api.setSettings({ startMaximized: S.startMaximized === false });
+      renderSettings();
+    };
+    row2.append(txt2, sw2);
+    sc.appendChild(row2);
+    pages.appearance.push(sc);
+  }
 
   // ----- Optimization: switch each animation on or off -----
   const optSec = el('div', 'set-sec');
@@ -4270,6 +4295,159 @@ function showFriendSearch() {
   setTimeout(() => q.focus(), 80);
 }
 
+// ---------- Tutorial (first launch + Settings → Tutorial) ----------
+let tutorialOn = false;
+function startTutorial() {
+  if (tutorialOn) return;
+  tutorialOn = true;
+  closeProfile();
+  closeGame();
+  settingsGuard = null;
+  if (typeof showView === 'function') showView('home');
+  const nav = (n) => () => navBtns[n];
+  const menuRow = (label) => () => [...document.querySelectorAll('.set-menurow')].find((r) => (r.querySelector('.smr-label') || {}).textContent === label);
+  // click: true = the player must click the highlighted thing to go on
+  const steps = [
+    { title: 'Welcome to BloxCool', text: 'This is a hands-on tour of what BloxCool adds on top of Roblox. You will click through it yourself. Skip any time.' },
+    { click: true, target: nav('Settings'), title: 'Open Settings', text: 'Click Settings. Almost everything BloxCool adds lives here.' },
+    { click: true, target: menuRow('My profile'), title: 'Your profile look', text: 'Click "My profile". This is where you design how you look to other BloxCool users.' },
+    { click: true, target: () => document.querySelector('.ptabs .pill:last-child'), title: 'Make it yours', text: 'These tabs hold your pictures, name style and effects. Click the last one, Effects.' },
+    { target: () => document.querySelector('.ptabs'), title: 'Seen by everyone on BloxCool', text: 'Whatever you set here shows on your profile for everyone using BloxCool. Nothing is saved until you press Save.' },
+    { click: true, target: () => document.querySelector('.set-back'), title: 'Go back', text: 'Click the arrow to go back to the Settings menu.' },
+    { click: true, target: menuRow('Background'), title: 'Your own backgrounds', text: 'Click "Background". You can use your own backgrounds, make them change automatically and darken them so text stays readable.' },
+    { target: () => document.querySelector('.set-pagehead'), title: 'Backgrounds', text: 'Pick one here whenever you like. Try it after the tour.' },
+    { click: true, target: nav('News'), title: 'News', text: 'Click News. It collects group shouts and wall posts from all your groups in one feed.' },
+    { click: true, target: nav('Home'), title: 'Back home', text: 'Click Home to go back.' },
+    { target: '#friends', title: 'Friends, in the app', text: 'Click a friend to open their BloxCool profile. The Add Friends tile searches usernames and sends requests right here, no website needed.' },
+    { target: '#player', title: 'Music player', text: 'Shows what is playing on your PC (or Spotify) and lets you skip and change volume. You can turn it off in Settings → Music.', skipIf: () => S.musicOff },
+    { title: "That's it", text: 'You can replay this any time from Settings → Accounts → Tutorial.' },
+  ].filter((s) => !(s.skipIf && s.skipIf()));
+  const root = el('div', 'tut');
+  const spot = el('div', 'tut-spot');
+  const card = el('div', 'tut-card');
+  const h = el('h2');
+  const p = el('p');
+  const hint = el('div', 'tut-hint', '👆 Click the highlighted spot');
+  const dots = el('div', 'tut-dots');
+  const row = el('div', 'tut-row');
+  const skip = el('button', 'pill', 'Skip tour');
+  const back = el('button', 'pill', 'Back');
+  const next = el('button', 'pill primary', 'Next');
+  row.append(skip, el('span', 'tut-gap'), back, next);
+  card.append(h, p, hint, dots, row);
+  root.append(spot, card);
+  document.body.appendChild(root);
+  let i = 0;
+  let run = 0;
+  let curTarget = null;
+  const resolve = (s) => {
+    if (!s.target) return null;
+    const t = typeof s.target === 'function' ? s.target() : $(s.target);
+    if (!t) return null;
+    const r = t.getBoundingClientRect();
+    return r.width > 4 && r.height > 4 ? t : null;
+  };
+  const place = async () => {
+    const my = ++run;
+    const s = steps[i];
+    h.textContent = s.title;
+    p.textContent = s.text;
+    hint.hidden = !s.click;
+    dots.replaceChildren(...steps.map((_, k) => el('i', k === i ? 'on' : '')));
+    back.hidden = i === 0 || !!s.click;
+    next.hidden = !!s.click;
+    next.textContent = i === steps.length - 1 ? 'Done' : i === 0 ? "Let's go" : 'Next';
+    skip.hidden = i === steps.length - 1;
+    root.classList.toggle('live', !!s.click);
+    let t = resolve(s);
+    for (let n = 0; !t && s.target && n < 14; n++) {
+      await new Promise((r) => setTimeout(r, 150)); // the page may still be drawing
+      if (my !== run || !tutorialOn) return;
+      t = resolve(s);
+    }
+    if (my !== run || !tutorialOn) return;
+    curTarget = s.click ? t : null;
+    if (!t) {
+      if (s.click) {
+        // that button isn't there (for example you are logged out): just go on
+        if (i < steps.length - 1) {
+          i++;
+          return place();
+        }
+      }
+      root.classList.add('center');
+      spot.style.cssText = 'display:none';
+      card.style.cssText = '';
+      return;
+    }
+    root.classList.remove('center');
+    const r = t.getBoundingClientRect();
+    const pad = 6;
+    spot.style.cssText = `display:block;left:${r.left - pad}px;top:${r.top - pad}px;width:${r.width + pad * 2}px;height:${r.height + pad * 2}px`;
+    const cw = 340;
+    const ch = card.offsetHeight || 190;
+    let left = r.right + 18;
+    let top = r.top;
+    if (left + cw > innerWidth - 12) {
+      left = Math.max(12, Math.min(r.left, innerWidth - cw - 12));
+      top = r.bottom + 18;
+      if (top + ch > innerHeight - 12) top = Math.max(12, r.top - ch - 18);
+    }
+    top = Math.max(12, Math.min(top, innerHeight - ch - 12));
+    card.style.cssText = `left:${left}px;top:${top}px`;
+  };
+  const end = () => {
+    if (!tutorialOn) return;
+    tutorialOn = false;
+    run++;
+    window.removeEventListener('resize', place);
+    document.removeEventListener('keydown', onKey, true);
+    for (const ev of ['pointerdown', 'mousedown', 'click']) document.removeEventListener(ev, guard, true);
+    root.classList.add('out');
+    setTimeout(() => root.remove(), 250);
+    if (!S.tutorialDone) window.api.setSettings({ tutorialDone: true }).then((x) => x && (S = x)).catch(() => {});
+  };
+  // while a "click this" step is showing, only the highlighted thing (and the tour card) can be clicked
+  const guard = (e) => {
+    const s = steps[i];
+    if (!s || !s.click || !curTarget) return;
+    if (card.contains(e.target)) return;
+    if (curTarget.contains(e.target)) {
+      if (e.type === 'click') {
+        const at = i;
+        setTimeout(() => {
+          if (tutorialOn && i === at) {
+            i++;
+            place();
+          }
+        }, 350);
+      }
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      end();
+    } else if ((e.key === 'ArrowRight' || e.key === 'Enter') && !steps[i].click) next.click();
+    else if (e.key === 'ArrowLeft' && i > 0 && !steps[i].click) back.click();
+  };
+  next.onclick = () => (i >= steps.length - 1 ? end() : (i++, place()));
+  back.onclick = () => {
+    if (i > 0) {
+      i--;
+      place();
+    }
+  };
+  skip.onclick = end;
+  for (const ev of ['pointerdown', 'mousedown', 'click']) document.addEventListener(ev, guard, true);
+  window.addEventListener('resize', place);
+  document.addEventListener('keydown', onKey, true);
+  place();
+}
+
 function closeProfile() {
   $('#profile').classList.remove('open');
   profileToken++;
@@ -4387,21 +4565,45 @@ async function loadProfileExtras(u, my, more, info) {
   // Groups
   (async () => {
     const r = await safe(J(`https://groups.roblox.com/v2/users/${u.id}/groups/roles?includeLocked=false`));
-    const list = ((r && r.data) || []).slice(0, 24);
-    if (!list.length) return;
-    const th = await safe(J(`https://thumbnails.roblox.com/v1/groups/icons?groupIds=${list.map((x) => x.group.id).join(',')}&size=150x150&format=Png&isCircular=false`));
-    const icons = new Map(((th && th.data) || []).map((d) => [d.targetId, d.imageUrl]));
+    const all = ((r && r.data) || []).filter((x) => x && x.group);
+    if (!all.length) return;
+    const icons = new Map();
+    const loadIcons = async (list) => {
+      for (const part of chunk(list.filter((x) => !icons.has(x.group.id)), 40)) {
+        const th = await safe(J(`https://thumbnails.roblox.com/v1/groups/icons?groupIds=${part.map((x) => x.group.id).join(',')}&size=150x150&format=Png&isCircular=false`));
+        ((th && th.data) || []).forEach((d) => icons.set(d.targetId, d.imageUrl));
+      }
+    };
+    const addTiles = (list) =>
+      list.forEach((x) => {
+        const t = el('button', 'ptile person');
+        const im = el('img');
+        if (icons.get(x.group.id)) im.src = icons.get(x.group.id);
+        im.alt = '';
+        t.append(im, el('span', null, x.group.name));
+        t.title = (x.role && x.role.name) || '';
+        t.onclick = () => showGroupCard(x.group.id, () => showProfile(u));
+        secGroups.body.appendChild(t);
+      });
+    const FIRST = 24;
+    await loadIcons(all.slice(0, FIRST));
     if (!alive()) return;
-    list.forEach((x) => {
-      const t = el('button', 'ptile person');
-      const im = el('img');
-      if (icons.get(x.group.id)) im.src = icons.get(x.group.id);
-      im.alt = '';
-      t.append(im, el('span', null, x.group.name));
-      t.title = (x.role && x.role.name) || '';
-      t.onclick = () => showGroupCard(x.group.id, () => showProfile(u));
-      secGroups.body.appendChild(t);
-    });
+    addTiles(all.slice(0, FIRST));
+    if (all.length > FIRST) {
+      // the first 24 show right away; the rest load when asked, so a profile with hundreds of groups stays quick
+      const more = el('button', 'ptile person');
+      const circ = el('div', 'addcircle moretile', '+' + (all.length - FIRST));
+      more.append(circ, el('span', null, 'Show all ' + all.length));
+      more.onclick = async () => {
+        more.disabled = true;
+        const rest = all.slice(FIRST);
+        await loadIcons(rest);
+        if (!alive()) return;
+        more.remove();
+        addTiles(rest);
+      };
+      secGroups.body.appendChild(more);
+    }
     secGroups.show();
   })();
 
@@ -4728,7 +4930,21 @@ async function showProfile(u) {
     }
     actions.append(join);
   }
-  actions.append(web, done);
+  actions.append(web);
+  if (String(u.id) !== String(S.userId)) {
+    const lk = lookOf(u.id);
+    if (lk && (lk.pfp || lk.banner || lk.bg)) {
+      const rep = el('button', 'pill', 'Report pictures');
+      rep.title = "Report this player's custom pictures as inappropriate";
+      rep.onclick = async () => {
+        rep.disabled = true;
+        const r = await window.api.reportProfile(u.id);
+        toast(r.ok ? 'Thanks. If enough people report it, the pictures are hidden.' : "Couldn't send the report: " + r.error);
+      };
+      actions.append(rep);
+    }
+  }
+  actions.append(done);
   info.appendChild(actions);
 
   const top = el('div', 'ptop');
@@ -4842,7 +5058,8 @@ function applyPlayColor() {
   await refreshAccounts();
   if (await enforceBan()) intro.dismiss();
   loadGrants();
-  setTimeout(newsPrefetch, 4000);
+  setTimeout(newsPrefetch, 2500);
+  setTimeout(chartsPrefetch, 3500);
 
   initTitlebar();
   initSidebar();
@@ -4888,16 +5105,27 @@ function applyPlayColor() {
   }
   ensureMyLook();
   refreshNotifications();
+  // re-measure the home page layout when the window changes size (resize, maximize, fullscreen)
+  let relayoutTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(relayoutTimer);
+    relayoutTimer = setTimeout(() => {
+      try { applyLayout(); } catch (e) { console.warn('relayout failed', e); }
+    }, 150);
+  });
+  let tick = 0;
   setInterval(() => {
     if (S.loggedIn) {
       loadPresence();
       refreshNotifications();
     }
-    enforceBan();
+    if (S.loggedIn && tick % 3 === 0) loadRobux();
+    if (++tick % 5 === 0) enforceBan(); // every 5 minutes keeps the server light
   }, 60000);
   const gamesP = (async () => {
     await refreshRecommended();
     await refreshContinue();
   })();
   await intro.finish(Promise.all([friendsP, gamesP]));
+  if (!S.tutorialDone && !document.querySelector('#banned, #locknotice')) setTimeout(startTutorial, 500);
 })();
