@@ -5,8 +5,9 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; img-src 'self' https: file: data: blob:; media-src 'self' file: https:; style-src 'self' 'unsafe-inline'; font-src 'self' file:; script-src 'self'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BloxCool</title>
+  <title>Eudora</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="theme.css" />
 </head>
 <body>
   <!-- Background -->
@@ -24,7 +25,7 @@
     <button id="wclose" title="Close">&#10005;</button>
   </div>
 
-  <div id="brand">BloxCool</div>
+  <div id="brand">Eudora</div>
 
   <!-- Left sidebar -->
   <nav id="sidebar"></nav>
@@ -34,7 +35,7 @@
     <section id="top">
       <!-- Music player -->
       <div id="player">
-        <div id="artwrap"><img id="art" alt="" /></div>
+        <div id="artwrap"><canvas id="artwave"></canvas><img id="art" alt="" /></div>
         <div id="pinfo">
           <div id="ptext">
             <div id="ptitle">No music yet</div>
@@ -94,6 +95,8 @@
   <section id="avatarView"></section>
   <section id="settingsView"></section>
   <section id="newsView"></section>
+  <section id="updatesView"></section>
+  <section id="chatView"></section>
 
   <!-- Floating popup / menu (one at a time) -->
   <div id="float"></div>

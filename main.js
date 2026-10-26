@@ -6,9 +6,9 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 
-// The app is now called BloxCool, but keep using the old data folder so your settings, logins and accounts stay.
+// The app is now called Eudora, but keep using the old data folder so your settings, logins and accounts stay.
 app.setPath('userData', path.join(app.getPath('appData'), 'bloxhome'));
-app.setName('BloxCool');
+app.setName('Eudora');
 
 // ---------------------------------------------------------------------------
 // Settings (saved in your user-data folder, edited through the app)
@@ -30,7 +30,7 @@ const DEFAULTS = {
   musicOff: false, // true = no music player at all
   musicSource: 'pc', // 'pc' = Windows media session (free) | 'spotify' = Spotify Web API (Premium)
   overlayOpacity: 0.45,
-  accent: '#00a2ff',
+  accent: '#8f63ff',
   backgroundIndex: 0,
   backgroundName: '',
   backgroundCycleSeconds: 0,
@@ -38,10 +38,11 @@ const DEFAULTS = {
   volume: 0.5,
   recent: [],
   pinned: [],
+  privServers: {}, // saved private server links: { [placeId]: [{ name, linkCode }] }
   fontName: '', // custom in-game font (file copied into userData/font)
   fontEnabled: false,
   fontLabel: '',
-  uiFontName: '', // BloxCool's own font
+  uiFontName: '', // Eudora's own font
   uiFontLabel: '',
   groupToken: '',
   animOff: {}, // animations the user turned off: { key: true }
@@ -59,6 +60,7 @@ const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 function loadSettings() {
   try {
     settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) };
+    if (['#00a2ff', '#ff6a4d'].includes(String(settings.accent).toLowerCase())) settings.accent = DEFAULTS.accent; // old defaults -> Eudora violet
   } catch {
     settings = { ...DEFAULTS };
   }
@@ -313,13 +315,86 @@ async function getAuthTicketViaPage(placeId) {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Small "Launching…" window (like Fishtrap): game name + icon, live status, Cancel
+// ---------------------------------------------------------------------------
+const netCache = new Map(); // url -> { exp, p } for quick repeat requests
+let launchWin = null;
+let launchTimer = null;
+function launchStatus(text, state) {
+  if (!launchWin || launchWin.isDestroyed()) return;
+  launchWin.webContents.executeJavaScript(`setStatus(${JSON.stringify(String(text))},${JSON.stringify(state || '')})`).catch(() => {});
+}
+function closeLaunchWin(delay) {
+  clearInterval(launchTimer);
+  const w = launchWin;
+  setTimeout(() => { if (w && !w.isDestroyed()) w.close(); }, delay || 0);
+}
+function showLaunchWindow(meta) {
+  if (launchWin && !launchWin.isDestroyed()) launchWin.close();
+  const name = String((meta && meta.name) || 'Roblox').slice(0, 80);
+  const icon = meta && /^https:\/\/[a-z0-9.-]+\.rbxcdn\.com\//i.test(String(meta.icon || '')) ? String(meta.icon) : '';
+  const win = new BrowserWindow({
+    width: 440, height: 230, frame: false, resizable: false, maximizable: false, minimizable: false,
+    alwaysOnTop: true, center: true, show: false, backgroundColor: '#150b2e', title: 'Eudora',
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+  });
+  launchWin = win;
+  win.setMenu(null);
+  const html = `<!doctype html><meta charset="utf-8"><style>
+*{box-sizing:border-box;margin:0}body{font-family:Segoe UI,Inter,system-ui,sans-serif;color:#fff;height:100vh;overflow:hidden;-webkit-app-region:drag;
+background:radial-gradient(120% 90% at 0% 0%,#3a1b86,#150b2e 60%),#150b2e;border:1px solid rgba(255,255,255,.14);padding:26px;display:flex;gap:20px;align-items:center}
+#ic{width:92px;height:92px;border-radius:22px;flex:none;background:linear-gradient(135deg,#7a45f0,#ff6fb3);background-size:cover;background-position:center;box-shadow:0 10px 30px rgba(0,0,0,.45),0 0 0 2px rgba(255,255,255,.12)}
+.r{flex:1;min-width:0}#nm{font-size:20px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#st{margin-top:6px;font-size:13.5px;color:#cbbdf5;min-height:18px}#st.err{color:#ff8a8a}
+.bar{margin-top:14px;height:6px;border-radius:6px;background:rgba(255,255,255,.12);overflow:hidden}
+.bar i{display:block;height:100%;width:38%;border-radius:6px;background:linear-gradient(90deg,#7a45f0,#ff6fb3);animation:s 1.3s ease-in-out infinite}
+.bar.done i{animation:none;width:100%}.bar.err i{animation:none;width:100%;background:#ff6a6a}
+@keyframes s{0%{transform:translateX(-100%)}100%{transform:translateX(280%)}}
+a{-webkit-app-region:no-drag;position:fixed;right:18px;bottom:14px;font-size:12px;color:#cbbdf5;text-decoration:none;padding:6px 12px;border-radius:9px;background:rgba(255,255,255,.08)}a:hover{background:rgba(255,255,255,.16)}
+#br{position:fixed;left:26px;bottom:18px;font-size:11px;letter-spacing:.14em;color:rgba(255,255,255,.4);font-weight:700}</style>
+<div id="ic"></div><div class="r"><div id="nm"></div><div id="st">Starting…</div><div class="bar" id="bar"><i></i></div></div>
+<div id="br">EUDORA</div><a href="eudora-close://x">Cancel</a>
+<script>function setStatus(t,s){document.getElementById('st').textContent=t;document.getElementById('st').className=s==='err'?'err':'';document.getElementById('bar').className='bar '+(s||'')}
+document.getElementById('nm').textContent=${JSON.stringify(name)};${icon ? `document.getElementById('ic').style.backgroundImage='url(${JSON.stringify(icon).slice(1, -1)})';` : ''}</script>`;
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  win.webContents.on('will-navigate', (ev, url) => { if (url.startsWith('eudora-close://')) { ev.preventDefault(); closeLaunchWin(); } });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.once('ready-to-show', () => win.show());
+  win.on('closed', () => { clearInterval(launchTimer); if (launchWin === win) launchWin = null; });
+  return win;
+}
+// Wait until Roblox is running, then say so and close the window
+function watchRobloxStart() {
+  if (process.platform !== 'win32') return closeLaunchWin(4000);
+  const { execFile } = require('child_process');
+  let tries = 0;
+  clearInterval(launchTimer);
+  launchTimer = setInterval(() => {
+    tries++;
+    execFile('tasklist', ['/FI', 'IMAGENAME eq RobloxPlayerBeta.exe', '/NH'], { windowsHide: true }, (err, out) => {
+      if (/RobloxPlayerBeta\.exe/i.test(String(out || ''))) {
+        clearInterval(launchTimer);
+        launchStatus('Roblox is opening — joining the game…', 'done');
+        closeLaunchWin(5000);
+      } else if (tries > 45) {
+        launchStatus('Still waiting for Roblox… you can close this window.', '');
+        closeLaunchWin(8000);
+      }
+    });
+  }, 1000);
+}
+
 async function launchDirect(placeId) {
   if (process.platform !== 'win32') throw new Error('Direct launch is Windows only');
+  launchStatus('Finding Roblox…');
   const exe = findRobloxPlayer();
   if (!exe) throw new Error('Roblox player not found');
   if (settings.fontEnabled) {
     try { applyFont(path.dirname(exe)); } catch (e) { console.warn('font apply failed', e.message); }
   }
+  launchStatus('Signing you in…');
   let ticket;
   try {
     ticket = await getAuthTicketViaPage(placeId);
@@ -335,6 +410,7 @@ async function launchDirect(placeId) {
     `roblox-player:1+launchmode:play+gameinfo:${ticket}+launchtime:${Date.now()}` +
     `+placelauncherurl:${encodeURIComponent(launcher)}+browsertrackerid:${tracker}` +
     '+robloxLocale:en_us+gameLocale:en_us+channel:+LaunchExp:InApp';
+  launchStatus('Starting Roblox…');
   const child = spawn(exe, [arg], { detached: true, stdio: 'ignore' });
   child.on('error', (e) => { lastLaunchError = String(e.message || e); });
   child.unref();
@@ -641,7 +717,7 @@ async function spotifyAccessToken() {
 
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const msgPage = (msg) =>
-  `<!doctype html><meta charset="utf-8"><title>BloxCool</title><body style="font-family:Segoe UI,sans-serif;background:#0b0d12;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h2>${msg}</h2></body>`;
+  `<!doctype html><meta charset="utf-8"><title>Eudora</title><body style="font-family:Segoe UI,sans-serif;background:#150b2e;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h2>${msg}</h2></body>`;
 
 function spotifyConnect(clientId) {
   return new Promise((resolve) => {
@@ -689,7 +765,7 @@ function spotifyConnect(clientId) {
           refresh: j.refresh_token,
           expires: Date.now() + (j.expires_in - 30) * 1000,
         });
-        res.end(msgPage('Spotify connected! You can close this tab and go back to BloxCool.'));
+        res.end(msgPage('Spotify connected! You can close this tab and go back to Eudora.'));
         done(true);
       } catch (e) {
         console.error('Spotify token exchange failed', e);
@@ -879,7 +955,7 @@ function registerIpc() {
   ipcMain.handle('uifont:choose', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     const res = await dialog.showOpenDialog(win, {
-      title: 'Choose a font for BloxCool',
+      title: 'Choose a font for Eudora',
       properties: ['openFile'],
       filters: [{ name: 'Fonts', extensions: ['ttf', 'otf', 'woff', 'woff2'] }],
     });
@@ -974,6 +1050,27 @@ function registerIpc() {
       return true;
     });
   });
+  // Friends-only chat (talks to your Eudora server; the id is always the logged-in account)
+  ipcMain.handle('chat:call', async (_e, method, route, body) => {
+    try {
+      if (!settings.userId) throw new Error('Log in or set your username first');
+      if (!/^\/chat\/[a-z/]{1,30}(\?[A-Za-z0-9=&,_-]{0,3000})?$/.test(String(route)) || !['GET', 'POST'].includes(method)) throw new Error('bad request');
+      const id = String(settings.userId);
+      const route2 = route + (route.includes('?') ? '&' : '?') + 'id=' + id;
+      const j = await groupFetch(method, route2, method === 'POST' ? { ...(body || {}), id } : undefined);
+      return { ok: true, data: j };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+  ipcMain.handle('config:updates', async () => {
+    try {
+      const j = await groupFetch('GET', '/updates');
+      return Array.isArray(j.updates) ? j.updates : [];
+    } catch {
+      return null;
+    }
+  });
   // Which exclusive effects each player was given (effect ids only)
   ipcMain.handle('config:grants', async () => {
     try {
@@ -1000,7 +1097,7 @@ function registerIpc() {
       return [];
     }
   });
-  // ---- Ban check: the server says if this Roblox account is banned from BloxCool ----
+  // ---- Ban check: the server says if this Roblox account is banned from Eudora ----
   const banCacheFile = () => path.join(app.getPath('userData'), 'ban-cache.json');
   ipcMain.handle('ban:check', async (_e, userId) => {
     const id = String(userId || '');
@@ -1107,35 +1204,94 @@ function registerIpc() {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(opts.body || {});
     }
-    const res = await net.fetch(url, init);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.json();
+    // GET requests: short memory cache + merge identical in-flight requests, and a 12s timeout
+    const ttl = /thumbnails\.roblox\.com/.test(u.hostname) ? 600000 : /\/universe$|\/games\?universeIds=/.test(url) ? 120000 : 20000;
+    const ck = init.method === 'GET' ? url : null;
+    if (ck) {
+      const hit = netCache.get(ck);
+      if (hit && hit.exp > Date.now()) return hit.p;
+    }
+    const run = (async () => {
+      const ac = new AbortController();
+      const to = setTimeout(() => ac.abort(), 12000);
+      try {
+        const res = await net.fetch(url, { ...init, signal: ac.signal });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return await res.json();
+      } finally {
+        clearTimeout(to);
+      }
+    })();
+    if (ck) {
+      netCache.set(ck, { exp: Date.now() + ttl, p: run });
+      if (netCache.size > 400) netCache.delete(netCache.keys().next().value);
+      run.catch(() => netCache.delete(ck));
+    }
+    return run;
   });
 
   // Starts the game. Direct launch (like Bloxstrap does): get a one-time login ticket for your account
   // and start RobloxPlayerBeta.exe ourselves. Falls back to the roblox:// link if that is not possible.
-  ipcMain.handle('game:launch', async (_e, placeId) => {
+  ipcMain.handle('game:launch', async (_e, placeId, meta) => {
     if (typeof localBlock === 'function' && localBlock()) throw new Error('Test accounts cannot join games');
     const id = String(placeId);
     if (!/^\d{1,15}$/.test(id)) throw new Error('Invalid place id');
+    showLaunchWindow(meta);
     try {
       await launchDirect(id);
+      watchRobloxStart();
       return 'direct';
     } catch (err) {
       console.warn('direct launch failed:', err && err.message);
       lastLaunchError = String((err && err.message) || err);
     }
-    await shell.openExternal(`roblox://experiences/start?placeId=${id}`);
+    launchStatus('Opening Roblox through its link…');
+    try {
+      await shell.openExternal(`roblox://experiences/start?placeId=${id}`);
+    } catch (e) {
+      launchStatus("Couldn't start Roblox. Is it installed?", 'err');
+      closeLaunchWin(4000);
+      throw e;
+    }
+    watchRobloxStart();
     return 'protocol';
   });
   // Join a friend who is in a game (same server)
-  ipcMain.handle('game:join', async (_e, placeId, gameId) => {
+  ipcMain.handle('game:join', async (_e, placeId, gameId, meta) => {
     if (typeof localBlock === 'function' && localBlock()) throw new Error('Test accounts cannot join games');
     const pid = String(placeId);
     const gid = String(gameId || '');
     if (!/^\d{1,15}$/.test(pid)) throw new Error('Invalid place id');
     if (!/^[0-9a-f-]{36}$/i.test(gid)) throw new Error('Invalid server id');
-    await shell.openExternal(`roblox://experiences/start?placeId=${pid}&gameInstanceId=${gid}`);
+    showLaunchWindow(meta);
+    launchStatus('Joining your friend’s server…');
+    try {
+      await shell.openExternal(`roblox://experiences/start?placeId=${pid}&gameInstanceId=${gid}`);
+    } catch (e) {
+      launchStatus("Couldn't start Roblox. Is it installed?", 'err');
+      closeLaunchWin(4000);
+      throw e;
+    }
+    watchRobloxStart();
+    return true;
+  });
+  // Join a private server with its link code (the privateServerLinkCode from a private server link)
+  ipcMain.handle('game:joinPrivate', async (_e, placeId, linkCode, meta, mode) => {
+    if (typeof localBlock === 'function' && localBlock()) throw new Error('Test accounts cannot join games');
+    const pid = String(placeId);
+    const code = String(linkCode || '');
+    if (!/^\d{1,15}$/.test(pid)) throw new Error('Invalid place id');
+    if (!/^[A-Za-z0-9_-]{8,80}$/.test(code)) throw new Error('Invalid private server code');
+    showLaunchWindow(meta);
+    launchStatus('Joining your private server…');
+    try {
+      await shell.openExternal(`roblox://experiences/start?placeId=${pid}&${mode === 'access' ? 'accessCode' : 'linkCode'}=${encodeURIComponent(code)}`);
+    } catch (e) {
+      launchStatus("Couldn't start Roblox. Is it installed?", 'err');
+      closeLaunchWin(4000);
+      throw e;
+    }
+    watchRobloxStart();
     return true;
   });
   ipcMain.handle('game:lastError', () => lastLaunchError);
@@ -1421,8 +1577,8 @@ function createWindow() {
     minHeight: 600,
     show: false, // shown once it is ready, already at the right size (no jump)
     frame: false,
-    backgroundColor: '#0b0d12',
-    title: 'BloxCool',
+    backgroundColor: '#150b2e',
+    title: 'Eudora',
     icon: path.join(__dirname, 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

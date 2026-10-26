@@ -1,4 +1,4 @@
-# BloxCool
+# Eudora
 
 A standalone desktop app (Electron) with a Roblox-style home page. It shows your friends, popular games and
 recently played games, and clicking a game launches it in the real Roblox client.
@@ -26,13 +26,13 @@ folder or settings. Logging out of Roblox on the website or changing your passwo
 **With Roblox's login window:**
 
 Click **Log in with Roblox** (first-launch screen, your profile popup, More menu, or Settings → Account).
-A window opens with **Roblox's own login page**. You type your password there, so BloxCool never sees it.
+A window opens with **Roblox's own login page**. You type your password there, so Eudora never sees it.
 The login is kept inside the app's own data folder (like a browser would), and only the app's background
 process uses it to ask Roblox for read-only info. **Log out** deletes it.
 
 Once logged in you get:
 - your real avatar and friends,
-- green/blue dots for friends who are in a game / online (online friends sorted first, refreshed every minute),
+- green/orange dots for friends who are in a game / online (online friends sorted first, refreshed every minute),
 - the unread-notification count on the bell,
 - **Avatar** button and Settings → Account → **Edit avatar**: opens Roblox's avatar editor in an app window.
 
@@ -55,7 +55,7 @@ The player at the top left has two modes. Pick one in **Settings → Music**:
   slider only works while Spotify has sound playing.
 - **Spotify account (needs Premium):** controls Spotify on any of your devices through Spotify's developer API.
   One-time setup: create an app at https://developer.spotify.com/dashboard, add the Redirect URI
-  `http://127.0.0.1:8888/callback`, tick "Web API", paste its Client ID in BloxCool and click Connect.
+  `http://127.0.0.1:8888/callback`, tick "Web API", paste its Client ID in Eudora and click Connect.
   Tokens are stored only on this computer (encrypted when Windows allows it) and only sent to Spotify.
 
 ## How games work

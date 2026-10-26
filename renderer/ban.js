@@ -55,7 +55,7 @@ function showLiftedNotice(kinds) {
   const lock = kinds.includes('lock');
   const title = ban && lock ? 'Your ban and look lock have ended' : ban ? 'Your ban has ended' : 'Your look lock has ended';
   const lines = [];
-  if (ban) lines.push('You can use BloxCool again.');
+  if (ban) lines.push('You can use Eudora again.');
   if (lock) lines.push('You can customize your profile again: banner, background, picture and description.');
   box.append(el('h1', null, title), ...lines.map((t) => el('p', null, t)), el('p', 'ban-sub', 'Please follow the rules so it does not happen again.'));
   const ok = el('button', 'pill primary', 'Got it');
@@ -120,7 +120,7 @@ function showBan(reason, until) {
   }
   b.innerHTML = '';
   const box = el('div', 'ban-box');
-  box.append(el('h1', null, 'Your account is banned from BloxCool'), el('p', null, reason ? 'Reason: ' + reason : 'The owner did not give a reason.'), el('p', null, untilText(until, 'Banned')));
+  box.append(el('h1', null, 'Your account is banned from Eudora'), el('p', null, reason ? 'Reason: ' + reason : 'The owner did not give a reason.'), el('p', null, untilText(until, 'Banned')));
   const others = (accountsInfo.accounts || []).filter((a) => a.userId !== S.userId);
   if (others.length) {
     box.appendChild(el('p', 'ban-sub', 'You can use another account:'));

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Build BloxCool installer
+title Build Eudora installer
 
 rem Windows needs admin rights to unpack one of the build tools (symbolic links), so ask for them once
 net session >nul 2>nul
@@ -27,7 +27,7 @@ echo Building the installer...
 call npm run dist
 if errorlevel 1 goto fail
 echo.
-echo Done! Your installer is in the "dist" folder: BloxCool-Setup.exe
+echo Done! Your installer is in the "dist" folder: Eudora-Setup.exe
 start "" "%~dp0dist"
 pause
 exit /b 0

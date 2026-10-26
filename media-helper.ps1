@@ -1,4 +1,4 @@
-# BloxCool media helper (Windows only).
+# Eudora media helper (Windows only).
 # Reads the Windows media session (the Spotify app, browsers, ...) and controls it.
 # Protocol: one command per line on stdin, exactly one JSON line per command on stdout.
 #   poll | poll:full | toggle | next | prev | seek:<ms> | vol:get | vol:set:<0..1> | quit

@@ -1,4 +1,4 @@
-# BloxCool
+# Eudora
 
 A desktop home page for Roblox (Electron, Windows). It shows your friends, games and group news,
 launches games in the real Roblox client, and lets you customise the layout, background and profile look.
@@ -7,10 +7,10 @@ This repository is public so you can read exactly what the app does before you r
 
 ## Install
 
-Download `BloxCool-Setup.exe` from the **Releases** page. Each release lists a SHA-256 checksum:
+Download `Eudora-Setup.exe` from the **Releases** page. Each release lists a SHA-256 checksum:
 
 ```
-certutil -hashfile BloxCool-Setup.exe SHA256
+certutil -hashfile Eudora-Setup.exe SHA256
 ```
 
 The installer is not code-signed yet, so Windows SmartScreen will warn you (More info → Run anyway).
@@ -34,8 +34,8 @@ Short version, full detail in [SECURITY.md](SECURITY.md):
 
 - Your Roblox login (cookie) is stored only on your PC, encrypted by Windows when available, and is only sent to `*.roblox.com`.
 - Your password is never seen by the app. The login window is Roblox's own page.
-- The app talks to a small set of hosts (listed in SECURITY.md). There is no ad code or third-party analytics. The profile server does keep a list of the Roblox IDs and usernames of people who open BloxCool, with the first and last time seen, so the owner can moderate. See SECURITY.md.
-- The BloxCool profile server stores the look you choose (name, banner, picture, effects) and that list of IDs and usernames, nothing else. Other people only see a custom picture after an automatic safety check approves it (if the check is switched off, pictures stay hidden from everyone but you), and you can report a player's pictures from their profile. You can also hide other players' custom pictures in Settings. The server's code is not published here.
+- The app talks to a small set of hosts (listed in SECURITY.md). There is no ad code or third-party analytics. The profile server does keep a list of the Roblox IDs and usernames of people who open Eudora, with the first and last time seen, so the owner can moderate. See SECURITY.md.
+- The Eudora profile server stores the look you choose (name, banner, picture, effects) and that list of IDs and usernames, nothing else. Other people only see a custom picture after an automatic safety check approves it (if the check is switched off, pictures stay hidden from everyone but you), and you can report a player's pictures from their profile. You can also hide other players' custom pictures in Settings. The server's code is not published here.
 
 ## Layout of the code
 

@@ -84,6 +84,25 @@ function wheelScroll(row) {
 // ============================================================================
 const universeCache = new Map(); // placeId -> universeId
 const imageCache = { icon: new Map(), thumb: new Map() };
+// Remember image links + place ids between launches, so pictures show up instantly
+(function loadPersisted() {
+  try {
+    const d = JSON.parse(localStorage.getItem('eud_img') || '{}');
+    (d.i || []).forEach(([k, v]) => imageCache.icon.set(k, v));
+    (d.t || []).forEach(([k, v]) => imageCache.thumb.set(k, v));
+    (d.u || []).forEach(([k, v]) => universeCache.set(k, v));
+  } catch {}
+})();
+let _persistT;
+function persistImages() {
+  clearTimeout(_persistT);
+  _persistT = setTimeout(() => {
+    try {
+      const lim = (m) => [...m.entries()].slice(-400);
+      localStorage.setItem('eud_img', JSON.stringify({ i: lim(imageCache.icon), t: lim(imageCache.thumb), u: lim(universeCache) }));
+    } catch {}
+  }, 800);
+}
 
 async function universeOf(placeId) {
   const key = String(placeId);
@@ -146,18 +165,22 @@ async function loadImages(universeIds) {
     );
   }
   await Promise.all(tasks);
+  persistImages();
 }
 
+const headCache = new Map();
 async function headshots(userIds) {
   const out = new Map();
-  for (const part of chunk([...new Set(userIds)], 100)) {
+  const need = [];
+  [...new Set(userIds)].forEach((id) => (headCache.has(id) ? out.set(id, headCache.get(id)) : need.push(id)));
+  await Promise.all(chunk(need, 100).map(async (part) => {
     try {
       const r = await J(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${part.join(',')}&size=150x150&format=Png&isCircular=false`);
-      (r.data || []).forEach((d) => d.imageUrl && out.set(d.targetId, d.imageUrl));
+      (r.data || []).forEach((d) => { if (d.imageUrl) { out.set(d.targetId, d.imageUrl); headCache.set(d.targetId, d.imageUrl); } });
     } catch (e) {
       console.warn('headshots failed', e);
     }
-  }
+  }));
   return out;
 }
 
@@ -308,6 +331,8 @@ function initSidebar() {
     { name: 'Charts', icon: ICONS.charts, view: 'charts' },
     { name: 'Avatar', icon: ICONS.avatar, view: 'avatar' },
     { name: 'News', icon: NEWS_ICON, view: 'news' },
+    { name: 'Updates', icon: UPDATES_ICON, view: 'updates' },
+    { name: 'Chat', icon: CHAT_ICON, view: 'chat' },
     { name: 'More', icon: ICONS.more, menu: true },
     { name: 'Settings', icon: ICONS.gear, view: 'settings', bottom: true },
   ];
@@ -1126,7 +1151,7 @@ function initMini() {
     );
 }
 
-// BloxCool users can have their own name and picture; show them in the friends bar
+// Eudora users can have their own name and picture; show them in the friends bar
 async function applyFriendLooks() {
   const ids = friendEls.map((x) => x.f.id);
   if (!ids.length) return;
@@ -1418,7 +1443,16 @@ async function openGame(g) {
   };
   const web = el('button', 'pill', 'Open on Roblox.com');
   web.onclick = () => window.api.openLink(`https://www.roblox.com/games/${g.placeId}`);
-  actions.append(play, pin, web);
+  const srvBtn = el('button', 'pill', 'Servers');
+  const srvPanel = el('div', 'gservers');
+  srvPanel.style.display = 'none';
+  srvBtn.onclick = () => {
+    const open = srvPanel.style.display === 'none';
+    srvPanel.style.display = open ? '' : 'none';
+    srvBtn.classList.toggle('on', open);
+    if (open && !srvPanel.dataset.loaded) { srvPanel.dataset.loaded = '1'; buildServers(srvPanel, g); }
+  };
+  actions.append(play, srvBtn, pin, web);
 
   const stats = el('div', 'gstats');
   const addStat = (label, value) => {
@@ -1440,7 +1474,7 @@ async function openGame(g) {
   const descH = el('h3', null, 'About this game');
   const desc = el('div', 'gdesc', 'Loading…');
 
-  body.append(actions, stats, shots, descH, desc);
+  body.append(actions, srvPanel, stats, shots, descH, desc);
   box.append(close, hero, head, body);
   $('#gamepage').classList.add('open');
 
@@ -1487,6 +1521,158 @@ async function openGame(g) {
   }
 }
 
+// ---- Server list for a game: pick a server by players or ping and join that exact one ----
+function buildServers(panel, g) {
+  const bar = el('div', 'gsrv-bar');
+  const sel = el('select');
+  [['small', 'Fewest players'], ['big', 'Most players'], ['ping', 'Best ping']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; sel.appendChild(o); });
+  const refresh = el('button', 'pill', 'Refresh');
+  bar.append(el('b', null, 'Public servers'), sel, refresh);
+  const list = el('div', 'gsrv-list');
+  panel.append(bar, list);
+  // ---- private servers: save a private server link, then join it in one click ----
+  const priv = el('div', 'gsrv-priv');
+  const drawPriv = () => {
+    priv.replaceChildren(el('b', null, 'My private servers'));
+    const saved = ((S.privServers || {})[String(g.placeId)] || []);
+    if (!saved.length) priv.appendChild(el('small', null, 'None saved for this game yet. Add a private server link below.'));
+    saved.forEach((ps, i) => {
+      const r = el('div', 'gsrv-row');
+      r.appendChild(el('b', null, ps.name));
+      const act = el('div', 'gsrv-act');
+      const j = el('button', 'pill primary', 'Join');
+      j.onclick = async () => {
+        if (typeof testAccGuard === 'function' && testAccGuard()) return;
+        try { await window.api.joinPrivate(g.placeId, ps.linkCode, { name: g.name + ' (private)', icon: imageCache.icon.get(g.universeId) || '' }); } catch { toast("Couldn't start Roblox. Is it installed?"); }
+      };
+      const x = el('button', 'pill', 'Remove');
+      x.onclick = async () => {
+        const all = { ...(S.privServers || {}) };
+        all[String(g.placeId)] = saved.filter((_, k) => k !== i);
+        S = await window.api.setSettings({ privServers: all });
+        drawPriv();
+      };
+      act.append(j, x);
+      r.appendChild(act);
+      priv.appendChild(r);
+    });
+    const add = el('div', 'gsrv-add');
+    const nm = el('input'); nm.placeholder = 'Name (e.g. My VIP)'; nm.maxLength = 40;
+    const lk = el('input'); lk.placeholder = 'Paste the private server link';
+    const ab = el('button', 'pill', 'Save');
+    ab.onclick = async () => {
+      let code = '';
+      const t = lk.value.trim();
+      try {
+        const u = new URL(t);
+        if (!/(^|\.)roblox\.com$/i.test(u.hostname)) throw new Error('host');
+        code = u.searchParams.get('privateServerLinkCode') || '';
+        if (!code && u.pathname.startsWith('/share') && u.searchParams.get('code') && u.searchParams.get('type') === 'Server') {
+          // newer share links: ask Roblox which private server this is
+          const r = await JA('https://apis.roblox.com/sharelinks/v1/resolve-link', { method: 'POST', body: { linkId: u.searchParams.get('code'), linkType: 'Server' } });
+          const d = r && r.privateServerInviteData;
+          if (d && String(d.placeId) !== String(g.placeId)) return toast('That link is for a different game.');
+          code = (d && d.linkCode) || '';
+        }
+      } catch { return toast('That does not look like a Roblox private server link.'); }
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(code)) return toast("I couldn't find a private server code in that link.");
+      const all = { ...(S.privServers || {}) };
+      const cur = all[String(g.placeId)] || [];
+      all[String(g.placeId)] = [...cur, { name: nm.value.trim() || 'Private server ' + (cur.length + 1), linkCode: code }].slice(0, 20);
+      S = await window.api.setSettings({ privServers: all });
+      toast('Saved');
+      drawPriv();
+    };
+    add.append(nm, lk, ab);
+    priv.appendChild(add);
+  };
+  drawPriv();
+  panel.insertBefore(priv, bar);
+  // private servers your logged-in account owns or can join, read straight from Roblox
+  const mine = el('div', 'gsrv-priv');
+  panel.insertBefore(mine, priv);
+  (async () => {
+    if (!S.loggedIn || onTest()) return;
+    mine.appendChild(el('b', null, 'On your Roblox account'));
+    const note = el('small', null, 'Loading…');
+    mine.appendChild(note);
+    try {
+      const r = await JA(`https://games.roblox.com/v1/games/${g.placeId}/private-servers?limit=25`);
+      const list = (r.data || []).filter((x) => x);
+      note.remove();
+      if (!list.length) return mine.appendChild(el('small', null, 'No private servers on your account for this game.'));
+      list.forEach((sv) => {
+        const row = el('div', 'gsrv-row');
+        const info = el('div', 'gsrv-info');
+        info.appendChild(el('b', null, sv.name || 'Private server'));
+        info.appendChild(el('small', null, (sv.playing || 0) + ' / ' + (sv.maxPlayers || '?') + ' playing' + (sv.owner && sv.owner.name ? ' · owner ' + sv.owner.name : '')));
+        const j = el('button', 'pill primary', 'Join');
+        j.onclick = async () => {
+          if (typeof testAccGuard === 'function' && testAccGuard()) return;
+          const meta = { name: g.name + ' (private)', icon: imageCache.icon.get(g.universeId) || '' };
+          try {
+            let code = '';
+            if (sv.vipServerId) {
+              try {
+                const d = await JA(`https://games.roblox.com/v1/vip-servers/${sv.vipServerId}`);
+                const m = String((d && d.link) || '').match(/privateServerLinkCode=([A-Za-z0-9_-]+)/);
+                if (m) code = m[1];
+              } catch {}
+            }
+            if (code) await window.api.joinPrivate(g.placeId, code, meta, 'link');
+            else if (sv.accessCode) await window.api.joinPrivate(g.placeId, sv.accessCode, meta, 'access');
+            else return toast("Roblox didn't give me a way to join that server.");
+          } catch { toast("Couldn't start Roblox. Is it installed?"); }
+        };
+        row.append(info, j);
+        mine.appendChild(row);
+      });
+    } catch (e) {
+      note.textContent = "Couldn't read your private servers from Roblox (" + String((e && e.message) || e).slice(0, 80) + ').';
+    }
+  })();
+  let data = [];
+  const draw = () => {
+    const s = [...data];
+    if (sel.value === 'small') s.sort((x, y) => x.playing - y.playing);
+    else if (sel.value === 'big') s.sort((x, y) => y.playing - x.playing);
+    else s.sort((x, y) => (x.ping == null) - (y.ping == null) || x.ping - y.ping);
+    list.replaceChildren();
+    if (!s.length) return list.appendChild(el('div', 'empty', 'No public servers found right now.'));
+    s.slice(0, 60).forEach((sv) => {
+      const r = el('div', 'gsrv-row');
+      const info = el('div', 'gsrv-info');
+      info.appendChild(el('b', null, sv.playing + ' / ' + sv.maxPlayers + ' players'));
+      info.appendChild(el('small', null, (sv.ping != null ? Math.round(sv.ping) + ' ms' : 'ping unknown') + (sv.fps ? ' · ' + Math.round(sv.fps) + ' fps' : '')));
+      const j = el('button', 'pill primary', 'Join');
+      j.onclick = async () => {
+        if (typeof testAccGuard === 'function' && testAccGuard()) return;
+        try {
+          await window.api.joinFriend(g.placeId, sv.id, { name: g.name, icon: imageCache.icon.get(g.universeId) || '' });
+          toast('Joining that server…');
+        } catch { toast("Couldn't start Roblox. Is it installed?"); }
+      };
+      r.append(info, j);
+      list.appendChild(r);
+    });
+  };
+  const load = async () => {
+    list.replaceChildren(el('div', 'empty', 'Loading servers…'));
+    try {
+      const call = S.loggedIn && !onTest() ? JA : J;
+      const url = `https://games.roblox.com/v1/games/${g.placeId}/servers/Public?sortOrder=Asc&excludeFullGames=true&limit=100`;
+      const r = await call(url);
+      data = (r.data || []).filter((x) => x && /^[0-9a-f-]{36}$/i.test(String(x.id)));
+      draw();
+    } catch {
+      list.replaceChildren(el('div', 'empty', "Couldn't load servers right now. Try Refresh in a moment."));
+    }
+  };
+  sel.onchange = draw;
+  refresh.onclick = load;
+  load();
+}
+
 const isPinned = (g) => (S.pinned || []).some((p) => String(p.placeId) === String(g.placeId));
 
 async function togglePin(g) {
@@ -1505,7 +1691,7 @@ const onTest = () => typeof testAccActive === 'function' && testAccActive();
 async function playGame(g) {
   if (typeof testAccGuard === 'function' && testAccGuard()) return;
   try {
-    const how = await window.api.launch(g.placeId);
+    const how = await window.api.launch(g.placeId, { name: g.name, icon: imageCache.icon.get(g.universeId) || '' });
     if (how === 'direct') toast('Launching ' + g.name + '…');
     else {
       const why = await window.api.launchError();
@@ -1634,6 +1820,121 @@ async function loadHome() {
     ['explore-api', () => call(`https://apis.roblox.com/explore-api/v1/get-sorts?sessionId=${sid}&device=computer&country=all`)],
   ];
   let sorts = [];
+  for (const [label, attempt] of attempts) {
+    try {
+      const j = await attempt();
+      sorts = parseSorts(j);
+      homeDebug.tried.push({ label, ok: true, topKeys: Object.keys(j || {}).slice(0, 12), sorts: sorts.length });
+      if (sorts.length) break;
+    } catch (e) {
+      homeDebug.tried.push({ label, ok: false, error: String((e && e.message) || e) });
+    }
+  }
+  homeSorts = sorts;
+  homeDebug.sorts = sorts.map((s) => `${s.name} (${s.ids.length})`);
+  if (!sorts.length) return null;
+
+  const cont = sorts.find((s) => /continue|продолж/i.test(s.name));
+  const rec =
+    sorts.find((s) => /recommend|рекоменд/i.test(s.name)) || sorts.find((s) => s !== cont && s.ids.length >= 6);
+  const contIds = cont ? cont.ids.slice(0, 30) : [];
+  const recIds = rec ? rec.ids.slice(0, 60) : [];
+  homeDebug.picked = { continue: cont && cont.name, recommended: rec && rec.name };
+
+  const map = await hydrateUniverses([...contIds, ...recIds]);
+  await loadImages([...map.keys()]);
+  homeContinue = contIds.map((id) => map.get(id)).filter(Boolean);
+  const recGames = recIds.map((id) => map.get(id)).filter(Boolean);
+  return recGames.length ? recGames : null;
+}
+
+async function refreshRecommended() {
+  const row = $('#recRow');
+  let shown = false;
+  try {
+    const c = JSON.parse(localStorage.getItem('eud_rec_' + (S && S.userId)) || 'null');
+    if (c && c.length) {
+      row.replaceChildren();
+      c.forEach((g) => row.appendChild(makeCard(g, true)));
+      shown = true;
+    }
+  } catch {}
+  if (!shown) row.replaceChildren(el('div', 'empty', 'Loading games…'));
+  const home = await loadHome();
+  if (!home) toast("Couldn't load your personal games from Roblox, showing popular ones");
+  recommended = home || (await fetchRecommended());
+  await loadImages(recommended.map((g) => g.universeId));
+  row.replaceChildren();
+  if (!recommended.length) {
+    row.appendChild(el('div', 'empty', "Couldn't reach Roblox. Check your internet and use More → Refresh."));
+    return;
+  }
+  recommended.forEach((g) => row.appendChild(makeCard(g, true)));
+  try { localStorage.setItem('eud_rec_' + (S && S.userId), JSON.stringify(recommended.slice(0, 30))); } catch {}
+}
+
+async function refreshAll() {
+  toast('Refreshing…');
+  await Promise.all([loadProfile(), loadFriends(), refreshRecommended()]);
+  await refreshContinue();
+}
+
+async function reloadMedia() {
+  media = await window.api.scanMedia();
+  bg.init();
+  player.init(media.music);
+  toast(`${media.backgrounds.length} backgrounds · ${media.music.length} songs`);
+}
+
+// ============================================================================
+// Boot
+// ============================================================================
+// ============================================================================
+// Views + Settings (Background)
+// ============================================================================
+let view = 'home';
+let profileDraft = null; // unsaved profile edits survive re-renders
+let saveBar = null;
+let settingsGuard = null; // returns true if leaving should be blocked (unsaved changes)
+let profileTab = 'pics'; // which tab of My profile is open
+let settingsPage = null; // null = the settings menu, otherwise the open sub-page
+const navBtns = {};
+
+
+// ============================================================================
+// Charts page
+// ============================================================================
+let chartData = null; // [{ name, games: [...] }]
+let chartDebug = {};
+let chartIndex = 0;
+let chartLoading = false;
+
+// Charts are fetched once, kept for 5 minutes, and can be started early in the background
+let chartsPromise = null;
+let chartsAt = 0;
+function chartsOnce() {
+  if (chartsPromise && Date.now() - chartsAt < 5 * 60 * 1000) return chartsPromise;
+  chartsAt = Date.now();
+  chartsPromise = loadCharts().then((r) => { if (!r.length) chartsPromise = null; return r; }, (e) => { chartsPromise = null; throw e; });
+  return chartsPromise;
+}
+function chartsPrefetch() {
+  if (chartData || chartLoading) return;
+  chartsOnce().then((r) => { if (r.length && !chartData) chartData = r; }).catch(() => {});
+}
+
+async function loadCharts() {
+  chartDebug = { tried: [] };
+  const call = S.loggedIn && !onTest() ? JA : J;
+  const sid = uuid4();
+  let sorts = [];
+  // Home-page lists (Continue, Recommended, Friends...) are NOT charts.
+  const notChart = /continue|recommend|favorite|friend|recent|для вас|продолж/i;
+  const attempts = [];
+  for (const ctx of ['Charts', 'GameCharts', 'ChartsPage']) {
+    attempts.push([`omni-${ctx}`, () => call('https://apis.roblox.com/discovery-api/omni-recommendation', { method: 'POST', body: { pageType: ctx, sessionId: sid } })]);
+    attempts.push([`explore-${ctx}`, () => call(`https://apis.roblox.com/explore-api/v1/get-sorts?sessionId=${sid}&device=computer&country=all&sortsPageContext=${ctx}`)]);
+  }
   // all the ways to ask run at once; the first one that really has charts wins
   await new Promise((resolve) => {
     let left = attempts.length;
@@ -1759,7 +2060,7 @@ const ANIMS = [
   ['buttons', 'Button press effects', 'Buttons shrinking when pressed and growing on hover'],
   ['windows', 'Windows and popups', 'Profile, game and menu windows popping in'],
   ['fx', 'Profile effects', 'Picture, banner and name effects on profiles and friends'],
-  ['logo', 'Logo wobble', 'The BloxCool text in the corner wobbling on hover'],
+  ['logo', 'Logo wobble', 'The Eudora text in the corner wobbling on hover'],
 ];
 const animOn = (k) => !(S && S.animOff && (S.animOff[k] || S.animOff.all));
 function applyAnimPrefs() {
@@ -1774,13 +2075,13 @@ function applyAnimPrefs() {
 // Profile effects (picture / banner / name), picked in Settings -> My profile
 // ============================================================================
 const PIC_FX = [['flame', 'Flame ring'], ['sparkle', 'Sparkle orbit'], ['neon', 'Neon pulse'], ['rainbow', 'Rainbow spin'], ['lightning', 'Lightning'], ['glitch', 'Glitch'], ['ghost', 'Ghost trail'], ['halo', 'Halo'],
-  ['pulse', 'Heartbeat'], ['radar', 'Radar'], ['bubbles', 'Bubbles'], ['hearts', 'Floating hearts'], ['ice', 'Frost'], ['shadow', 'Dark aura'], ['laser', 'Laser scan'], ['portal', 'Portal'], ['confetti', 'Confetti'], ['sun', 'Sunburst'], ['owner', 'Owner crown'], ['symbiote', 'Symbiote']];
+  ['pulse', 'Heartbeat'], ['radar', 'Radar'], ['bubbles', 'Bubbles'], ['hearts', 'Floating hearts'], ['ice', 'Frost'], ['shadow', 'Dark aura'], ['laser', 'Laser scan'], ['portal', 'Portal'], ['confetti', 'Confetti'], ['sun', 'Sunburst'], ['eudora', 'Eudora'], ['owner', 'Owner crown'], ['symbiote', 'Symbiote']];
 const BAN_FX = [['snow', 'Snowfall'], ['rain', 'Rain'], ['stars', 'Starfield'], ['embers', 'Embers'], ['matrix', 'Matrix rain'], ['hearts', 'Floating hearts'], ['fireflies', 'Fireflies'], ['aurora', 'Aurora'], ['scanlines', 'Scanlines'],
-  ['sakura', 'Sakura petals'], ['confetti', 'Confetti'], ['bubbles', 'Bubbles'], ['storm', 'Thunderstorm'], ['binary', 'Binary'], ['sunset', 'Sunset'], ['galaxy', 'Galaxy'], ['waves', 'Waves'], ['fog', 'Fog'], ['retrogrid', 'Retro grid'], ['gold', 'Golden dust'], ['webs', 'Spider webs']];
-const BG_FX = [['ooze', 'Black ooze']];
+  ['sakura', 'Sakura petals'], ['confetti', 'Confetti'], ['bubbles', 'Bubbles'], ['storm', 'Thunderstorm'], ['binary', 'Binary'], ['sunset', 'Sunset'], ['galaxy', 'Galaxy'], ['waves', 'Waves'], ['fog', 'Fog'], ['retrogrid', 'Retro grid'], ['eudora', 'Eudora glow'], ['gold', 'Golden dust'], ['webs', 'Spider webs']];
+const BG_FX = [['ooze', 'Black ooze'], ['eudora', 'Eudora glow']];
 const NAME_FX = [['gradient', 'Gradient'], ['shine', 'Shine'], ['neon', 'Neon glow'], ['glitch', 'Glitch'],
   ['rainbow', 'Rainbow'], ['fire', 'Fire'], ['ice', 'Ice'], ['chrome', 'Chrome'], ['wave', 'Wave'], ['cursor', 'Typing cursor'], ['pulse', 'Pulse'], ['outline', 'Outline'], ['retro3d', 'Retro 3D'], ['twinkle', 'Twinkle'], ['royal', 'Royal gold']];
-const OWNER_FX = new Set(['owner', 'gold', 'royal']);
+const OWNER_FX = new Set(['owner', 'gold', 'royal', 'eudora']);
 const ALT_FX = new Set(['symbiote', 'webs', 'ooze']); // only for the OWNER'S ALT account
 const isAltAcc = () => {
   const t = tagsById.get(Number(S.userId));
@@ -1843,6 +2144,7 @@ function fxPic(host, name) {
   else if (name === 'portal') { add('div', 'fx-prt'); add('div', 'fx-prt b'); }
   else if (name === 'confetti') for (let i = 0; i < 9; i++) { const a = (i / 9) * 6.28; add('i', 'fx-cf', '', `--x:${Math.round(Math.cos(a) * 62)}px;--y:${Math.round(Math.sin(a) * 62)}px;background:hsl(${i * 40},90%,60%);animation-delay:${(i % 3) * 0.25}s`); }
   else if (name === 'sun') add('div', 'fx-rays');
+  else if (name === 'eudora') { add('div', 'fx-rb fx-eu'); add('div', 'fx-orbit', '<i style="left:48%;top:-6%">✦</i><i style="left:94%;top:48%;font-size:9px">✧</i><i style="left:12%;top:92%;font-size:11px">✦</i>'); }
   else if (name === 'symbiote') {
     let h = '';
     for (let i = 0; i < 9; i++) h += `<i class="fx-td" style="--a:${i * 40 + (i % 2) * 12}deg;--s:${(0.8 + (i % 3) * 0.22).toFixed(2)};animation-delay:${(i * 0.17).toFixed(2)}s"></i>`;
@@ -1954,6 +2256,7 @@ function fxBanner(box, name, opts) {
   const layer = el('div', 'fxlayer' + (pv ? ' pv' : '') + (slot === 'bg' ? ' bgl' : ''));
   layer.dataset.slot = slot;
   const inner = el('div', 'fxin fxb-' + name);
+  if (name === 'eudora') inner.innerHTML = '<i></i><i></i><i></i>';
   if (name === 'fog') inner.innerHTML = '<i></i><i></i><i></i>';
   if (name === 'waves') inner.innerHTML = '<i></i><i></i>';
   if (name === 'webs') inner.innerHTML = fxWebSvg(false) + fxWebSvg(true) + '<span class="fx-thread"><b></b></span><span class="fx-thread t2"><b></b></span>';
@@ -1977,7 +2280,7 @@ function fxBanner(box, name, opts) {
       c.__cfg = rdb.particles;
       inner.appendChild(c);
     }
-  } else if (!['aurora', 'scanlines', 'sunset', 'waves', 'fog', 'retrogrid', 'webs', 'ooze'].includes(name)) {
+  } else if (!['aurora', 'scanlines', 'sunset', 'waves', 'fog', 'retrogrid', 'webs', 'ooze', 'eudora'].includes(name)) {
     const c = document.createElement('canvas');
     c.className = 'fxc';
     c.dataset.kind = name === 'galaxy' ? 'stars' : name;
@@ -2506,13 +2809,18 @@ function showView(v, page) {
   $('#chartsView').classList.toggle('show', v === 'charts');
   $('#avatarView').classList.toggle('show', v === 'avatar');
   $('#newsView').classList.toggle('show', v === 'news');
+  $('#updatesView').classList.toggle('show', v === 'updates');
+  $('#chatView').classList.toggle('show', v === 'chat');
+  if (v !== 'chat' && typeof chatLeave === 'function') chatLeave();
   for (const [name, b] of Object.entries(navBtns)) {
-    b.classList.toggle('active', (name === 'Home' && v === 'home') || (name === 'Settings' && v === 'settings') || (name === 'Charts' && v === 'charts') || (name === 'Avatar' && v === 'avatar') || (name === 'News' && v === 'news'));
+    b.classList.toggle('active', (name === 'Home' && v === 'home') || (name === 'Settings' && v === 'settings') || (name === 'Charts' && v === 'charts') || (name === 'Avatar' && v === 'avatar') || (name === 'News' && v === 'news') || (name === 'Updates' && v === 'updates') || (name === 'Chat' && v === 'chat'));
   }
   if (v === 'settings') syncBackgrounds(true);
   else if (v === 'charts') openCharts();
   else if (v === 'avatar') openAvatar();
   else if (v === 'news') openNews();
+  else if (v === 'updates') openUpdates();
+  else if (v === 'chat') openChat();
   else $('#main').scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -2911,7 +3219,7 @@ function renderSettings() {
       row.appendChild(sw);
     }
     const rm = el('button', 'acctremove', '✕');
-    rm.title = 'Remove this account from BloxCool';
+    rm.title = 'Remove this account from Eudora';
     rm.onclick = () => removeAccount(a.userId);
     row.appendChild(rm);
     list.appendChild(row);
@@ -2935,7 +3243,7 @@ function renderSettings() {
   {
     const tut = el('div', 'set-sec');
     tut.appendChild(el('h3', null, 'Tutorial'));
-    tut.appendChild(el('div', 'set-desc', 'A hands-on tour: you click through what BloxCool adds (settings, profile look, backgrounds, news, friends, music).'));
+    tut.appendChild(el('div', 'set-desc', 'A hands-on tour: you click through what Eudora adds (settings, profile look, backgrounds, news, friends, music).'));
     const ta = el('div', 'set-actions');
     const tb = el('button', 'pill primary', 'Show the tutorial');
     tb.onclick = () => startTutorial();
@@ -2947,7 +3255,7 @@ function renderSettings() {
   // ----- My profile (look + group server) -----
   const pl = el('div', 'set-sec');
   pl.appendChild(el('h3', null, 'Profile look'));
-  pl.appendChild(el('div', 'set-desc', 'Everyone who uses BloxCool sees your profile look when they open your profile.'));
+  pl.appendChild(el('div', 'set-desc', 'Everyone who uses Eudora sees your profile look when they open your profile.'));
   const ptabBar = el('div', 'set-pills ptabs');
   const panes = { pics: el('div', 'ptab'), name: el('div', 'ptab'), fx: el('div', 'ptab') };
   [['pics', 'Pictures'], ['name', 'Name & style'], ['fx', 'Effects']].forEach(([k, label]) => {
@@ -3028,10 +3336,10 @@ function renderSettings() {
 
   const nickIn = document.createElement('input');
   nickIn.className = 'set-input';
-  nickIn.placeholder = 'BloxCool username (any name, emojis too, shown to everyone in BloxCool)';
+  nickIn.placeholder = 'Eudora username (any name, emojis too, shown to everyone in Eudora)';
   nickIn.value = draft.nick || '';
   nickIn.oninput = () => (draft.nick = Array.from(nickIn.value.trim()).slice(0, 32).join(''));
-  panes.name.appendChild(el('div', 'fxlabel', 'BloxCool username'));
+  panes.name.appendChild(el('div', 'fxlabel', 'Eudora username'));
   panes.name.appendChild(nickIn);
 
   const pfpRow = el('div', 'set-actions');
@@ -3073,7 +3381,7 @@ function renderSettings() {
   const colRow = el('div', 'set-row');
   const col = document.createElement('input');
   col.type = 'color';
-  col.value = draft.accent || S.accent || '#00a2ff';
+  col.value = draft.accent || S.accent || '#8f63ff';
   col.oninput = () => (draft.accent = col.value);
   colRow.append(el('span', null, 'Profile color'), col);
   colRow.style.margin = '14px 0';
@@ -3197,7 +3505,7 @@ function renderSettings() {
       const waiting = Object.values(r.review || {}).some((v) => v !== 'approved');
       if (r.locked) toast('Your look is locked, so nothing was changed. ' + untilText(r.lockUntil, 'Locked'));
       else if (r.blockedUntil) toast("Saved, but your pictures were left out. Too many people reported them, so you can't upload pictures until " + new Date(r.blockedUntil).toLocaleString() + '.');
-      else toast(!waiting ? 'Saved. Everyone using BloxCool can see it now.'
+      else toast(!waiting ? 'Saved. Everyone using Eudora can see it now.'
         : r.checking ? 'Saved. Your pictures are being checked first, others will see them in a minute.'
         : 'Saved. Your pictures stay hidden from others until the safety check is switched on.');
       loadProfile();
@@ -3272,10 +3580,10 @@ function renderSettings() {
   }
   pages.profile.push(pl);
 
-  // ----- BloxCool font -----
+  // ----- Eudora font -----
   const ufn = el('div', 'set-sec');
-  ufn.appendChild(el('h3', null, 'BloxCool font'));
-  ufn.appendChild(el('div', 'set-desc', 'Changes the font of BloxCool itself (menus, names, titles). Pick a .ttf, .otf or .woff file.'));
+  ufn.appendChild(el('h3', null, 'Eudora font'));
+  ufn.appendChild(el('div', 'set-desc', 'Changes the font of Eudora itself (menus, names, titles). Pick a .ttf, .otf or .woff file.'));
   if (S.uiFontName && S.uiFontLabel) ufn.appendChild(el('div', 'set-desc', 'Current font: ' + S.uiFontLabel));
   const uRow = el('div', 'set-actions');
   const uPick = el('button', 'pill primary', S.uiFontName ? 'Change font…' : 'Choose font…');
@@ -3308,7 +3616,7 @@ function renderSettings() {
     el(
       'div',
       'set-desc',
-      'Use your own font inside Roblox games (.ttf or .otf). It is applied to the Roblox files that BloxCool starts, so it needs direct launch to work. If a game opens through another launcher, that launcher may undo it.'
+      'Use your own font inside Roblox games (.ttf or .otf). It is applied to the Roblox files that Eudora starts, so it needs direct launch to work. If a game opens through another launcher, that launcher may undo it.'
     )
   );
   if (S.fontEnabled && S.fontLabel) fnt.appendChild(el('div', 'set-desc', 'Current font: ' + S.fontLabel));
@@ -3492,7 +3800,7 @@ function renderSettings() {
     el(
       'div',
       'set-desc',
-      'Click a picture to use it as your background. Pictures you add are copied into BloxCool and stay saved. GIFs and videos (.mp4, .webm) animate.'
+      'Click a picture to use it as your background. Pictures you add are copied into Eudora and stay saved. GIFs and videos (.mp4, .webm) animate.'
     )
   );
 
@@ -3773,10 +4081,10 @@ function renderSettings() {
   const defs = [
     ['account', 'Accounts', S.loggedIn ? '@' + S.username + (accountsInfo.accounts.length > 1 ? ' · ' + accountsInfo.accounts.length + ' accounts' : '') : 'Not logged in'],
     ['background', 'Background', S.backgroundName ? S.backgroundName.replace(/\.[^.]+$/, '').slice(0, 24) : 'None'],
-    ['profile', 'My profile', 'Seen by all BloxCool users'],
+    ['profile', 'My profile', 'Seen by all Eudora users'],
     ['layout', 'Layout', 'Move or hide home page blocks'],
     ['music', 'Music', S.musicSource === 'spotify' ? 'Spotify account' : 'This PC'],
-    ['appearance', 'Appearance', 'Readability, BloxCool font'],
+    ['appearance', 'Appearance', 'Readability, Eudora font'],
     ['optimization', 'Optimization', S.animOff && S.animOff.all ? 'All animations off' : Object.keys(S.animOff || {}).length ? Object.keys(S.animOff).length + ' animations off' : 'Animations'],
     ['game', 'Game font', S.fontEnabled && S.fontLabel ? S.fontLabel : 'Default'],
   ];
@@ -3817,7 +4125,7 @@ function renderSettings() {
   sv.appendChild(head);
 
   const secs = pages[settingsPage];
-  if (settingsPage === 'appearance') secs.reverse(); // Readability first, then the BloxCool font
+  if (settingsPage === 'appearance') secs.reverse(); // Readability first, then the Eudora font
   const wrap = el('div', 'set-page');
   secs.forEach((sec) => {
     // a page with a single section already has its title in the header
@@ -4073,7 +4381,7 @@ async function openAvatarEditor() {
 
 async function welcome() {
   const name = await promptModal({
-    title: 'Welcome to BloxCool',
+    title: 'Welcome to Eudora',
     text: 'Log in with your cookie to see your real avatar, which friends are online and your notifications. Or just type a username to look around.',
     placeholder: 'Roblox username (optional)',
     okLabel: 'Use username',
@@ -4308,17 +4616,17 @@ function startTutorial() {
   const menuRow = (label) => () => [...document.querySelectorAll('.set-menurow')].find((r) => (r.querySelector('.smr-label') || {}).textContent === label);
   // click: true = the player must click the highlighted thing to go on
   const steps = [
-    { title: 'Welcome to BloxCool', text: 'This is a hands-on tour of what BloxCool adds on top of Roblox. You will click through it yourself. Skip any time.' },
-    { click: true, target: nav('Settings'), title: 'Open Settings', text: 'Click Settings. Almost everything BloxCool adds lives here.' },
-    { click: true, target: menuRow('My profile'), title: 'Your profile look', text: 'Click "My profile". This is where you design how you look to other BloxCool users.' },
+    { title: 'Welcome to Eudora', text: 'This is a hands-on tour of what Eudora adds on top of Roblox. You will click through it yourself. Skip any time.' },
+    { click: true, target: nav('Settings'), title: 'Open Settings', text: 'Click Settings. Almost everything Eudora adds lives here.' },
+    { click: true, target: menuRow('My profile'), title: 'Your profile look', text: 'Click "My profile". This is where you design how you look to other Eudora users.' },
     { click: true, target: () => document.querySelector('.ptabs .pill:last-child'), title: 'Make it yours', text: 'These tabs hold your pictures, name style and effects. Click the last one, Effects.' },
-    { target: () => document.querySelector('.ptabs'), title: 'Seen by everyone on BloxCool', text: 'Whatever you set here shows on your profile for everyone using BloxCool. Nothing is saved until you press Save.' },
+    { target: () => document.querySelector('.ptabs'), title: 'Seen by everyone on Eudora', text: 'Whatever you set here shows on your profile for everyone using Eudora. Nothing is saved until you press Save.' },
     { click: true, target: () => document.querySelector('.set-back'), title: 'Go back', text: 'Click the arrow to go back to the Settings menu.' },
     { click: true, target: menuRow('Background'), title: 'Your own backgrounds', text: 'Click "Background". You can use your own backgrounds, make them change automatically and darken them so text stays readable.' },
     { target: () => document.querySelector('.set-pagehead'), title: 'Backgrounds', text: 'Pick one here whenever you like. Try it after the tour.' },
     { click: true, target: nav('News'), title: 'News', text: 'Click News. It collects group shouts and wall posts from all your groups in one feed.' },
     { click: true, target: nav('Home'), title: 'Back home', text: 'Click Home to go back.' },
-    { target: '#friends', title: 'Friends, in the app', text: 'Click a friend to open their BloxCool profile. The Add Friends tile searches usernames and sends requests right here, no website needed.' },
+    { target: '#friends', title: 'Friends, in the app', text: 'Click a friend to open their Eudora profile. The Add Friends tile searches usernames and sends requests right here, no website needed.' },
     { target: '#player', title: 'Music player', text: 'Shows what is playing on your PC (or Spotify) and lets you skip and change volume. You can turn it off in Settings → Music.', skipIf: () => S.musicOff },
     { title: "That's it", text: 'You can replay this any time from Settings → Accounts → Tutorial.' },
   ].filter((s) => !(s.skipIf && s.skipIf()));
@@ -4916,7 +5224,7 @@ async function showProfile(u) {
       join.onclick = async () => {
         if (typeof testAccGuard === 'function' && testAccGuard()) return;
         try {
-          await window.api.joinFriend(pid, pres.gameId);
+          await window.api.joinFriend(pid, pres.gameId, { name: (u.displayName || u.name) + '’s game', icon: '' });
           toast('Joining ' + (u.displayName || u.name) + '…');
         } catch {
           toast("Couldn't join. Is Roblox installed?");
@@ -5024,7 +5332,7 @@ async function showProfile(u) {
 
 // Play buttons use your profile color
 function applyPlayColor() {
-  const c = (S && ((S.profileCustom && S.profileCustom.accent) || S.accent)) || '#00a2ff';
+  const c = (S && ((S.profileCustom && S.profileCustom.accent) || S.accent)) || '#8f63ff';
   const root = document.documentElement.style;
   root.setProperty('--play', c);
   const m = /^#?([0-9a-f]{6})$/i.exec(c);
@@ -5129,3 +5437,277 @@ function applyPlayColor() {
   await intro.finish(Promise.all([friendsP, gamesP]));
   if (!S.tutorialDone && !document.querySelector('#banned, #locknotice')) setTimeout(startTutorial, 500);
 })();
+
+// ----- Music player waves: soft rings that breathe around the round album art (decorative; they speed up while music plays) -----
+(function artWaves() {
+  const cv = document.getElementById('artwave');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  let energy = 0.25, last = 0;
+  const rings = [ [1.18, 0.030, 5, 0.0, 2.2, 0.95], [1.32, 0.040, 4, 1.6, 2.0, 0.7], [1.46, 0.050, 6, 3.1, 1.8, 0.5], [1.6, 0.060, 3, 4.4, 1.6, 0.32] ];
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    if (document.hidden) return;
+    const pl = document.getElementById('player');
+    if (!pl || pl.dataset.form !== 'tall' || !cv.offsetParent) return;
+    if (ts - last < 28) return; // ~35 fps is plenty
+    last = ts;
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+    if (!w || !h) return;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const playing = !!(typeof player !== 'undefined' && player._playing);
+    energy += ((playing ? 1 : 0.22) - energy) * 0.06;
+    const t = ts / 1000;
+    const beat = 0.72 + 0.28 * Math.abs(Math.sin(t * 2.3) * Math.sin(t * 0.8 + 1));
+    const e = energy * (playing ? beat : 1);
+    const artR = w / 4, cx = w / 2, cy = h / 2;
+    let accent = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '').trim();
+    if (!/^(#[0-9a-f]{3,8}|rgb|hsl)/i.test(accent)) accent = '#8f63ff';
+    const g = ctx.createLinearGradient(0, 0, w, h);
+    g.addColorStop(0, accent); g.addColorStop(1, '#ff7ac8');
+    ctx.clearRect(0, 0, w, h);
+    ctx.lineJoin = 'round';
+    for (const [rf, amp, k, ph, lw, op] of rings) {
+      ctx.beginPath();
+      const sp = playing ? 1.6 : 0.5;
+      for (let i = 0; i <= 120; i++) {
+        const a = (i / 120) * Math.PI * 2;
+        const r = artR * rf + artR * amp * e * (Math.sin(k * a + ph + t * sp) + 0.5 * Math.sin((k + 3) * a - ph * 1.3 - t * sp * 0.8));
+        const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.closePath();
+      ctx.globalAlpha = op * (0.55 + 0.45 * Math.min(1, e));
+      ctx.strokeStyle = g; ctx.lineWidth = lw * dpr;
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  requestAnimationFrame(frame);
+})();
+
+
+// ============================================================================
+// Updates: announcements the Eudora owner posts (admin panel -> Updates)
+// ============================================================================
+let updatesList = [];
+const updAgo = (t) => {
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 90) return 'just now';
+  if (s < 3600) return Math.round(s / 60) + ' min ago';
+  if (s < 86400) return Math.round(s / 3600) + ' h ago';
+  if (s < 86400 * 30) return Math.round(s / 86400) + ' d ago';
+  return new Date(t).toLocaleDateString();
+};
+function updatesBadge() {
+  const b = navBtns && navBtns['Updates'];
+  if (!b) return;
+  let seen = 0;
+  try { seen = Number(localStorage.getItem('eud_upd_seen')) || 0; } catch {}
+  const n = updatesList.filter((u) => u.at > seen).length;
+  let dot = b.querySelector('.navdot');
+  if (n && view !== 'updates') {
+    if (!dot) { dot = el('i', 'navdot'); b.appendChild(dot); }
+  } else if (dot) dot.remove();
+}
+async function loadUpdates() {
+  const r = await window.api.updatesGet();
+  if (Array.isArray(r)) updatesList = r;
+  updatesBadge();
+  return r;
+}
+async function openUpdates() {
+  const v = $('#updatesView');
+  v.replaceChildren(el('h1', null, 'Updates'), el('p', 'upd-sub', 'News from the Eudora team.'));
+  const list = el('div', 'upd-list');
+  v.appendChild(list);
+  list.appendChild(el('div', 'empty', 'Loading…'));
+  const r = await loadUpdates();
+  list.replaceChildren();
+  if (r === null) { list.appendChild(el('div', 'empty', "Couldn't reach the Eudora server. Try again in a minute.")); return; }
+  if (!updatesList.length) { list.appendChild(el('div', 'empty', 'No updates yet.')); return; }
+  const seen = (() => { try { return Number(localStorage.getItem('eud_upd_seen')) || 0; } catch { return 0; } })();
+  updatesList.forEach((u) => {
+    const c = el('article', 'upd-card' + (u.at > seen ? ' new' : '') + (u.pin ? ' pin' : ''));
+    const head = el('div', 'upd-head');
+    if (u.title) head.appendChild(el('h3', null, u.title));
+    head.appendChild(el('small', null, (u.pin ? '📌 ' : '') + updAgo(u.at)));
+    c.appendChild(head);
+    if (u.body) { const p = el('p', null); p.textContent = u.body; c.appendChild(p); }
+    list.appendChild(c);
+  });
+  try { localStorage.setItem('eud_upd_seen', String(Math.max(...updatesList.map((u) => u.at)))); } catch {}
+  updatesBadge();
+}
+setTimeout(() => { try { loadUpdates(); } catch {} }, 4000);
+
+
+// ============================================================================
+// Chat: friends-only text chat between Eudora users (rules screen -> verify -> chat)
+// ============================================================================
+const chat = { friends: [], on: new Set(), with: null, convos: [], blocked: [], timer: 0, inboxTimer: 0, last: 0 };
+const chatCall = async (m, r, b) => {
+  const x = await window.api.chatCall(m, r, b);
+  if (!x.ok) throw new Error(x.error);
+  return x.data;
+};
+const chatLsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const chatLsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+function chatLeave() { clearInterval(chat.timer); chat.timer = 0; }
+async function chatFriendsList() {
+  const r = await J(`https://friends.roblox.com/v1/users/${S.userId}/friends`);
+  const f = (r.data || []).map((x) => ({ id: String(x.id), name: x.displayName || x.name || '' }));
+  const miss = f.filter((x) => !x.name);
+  for (const part of chunk(miss.map((x) => Number(x.id)), 100)) {
+    try {
+      const u = await J('https://users.roblox.com/v1/users', { method: 'POST', body: { userIds: part, excludeBannedUsers: false } });
+      (u.data || []).forEach((d) => { const t = f.find((x) => x.id === String(d.id)); if (t) t.name = d.displayName || d.name; });
+    } catch {}
+  }
+  return f;
+}
+async function openChat() {
+  const v = $('#chatView');
+  chatLeave();
+  v.replaceChildren(el('h1', null, 'Chat'));
+  if (!S.userId) return v.appendChild(el('p', 'upd-sub', 'Set your Roblox username first (More → Change username).'));
+  if (typeof testAccGuard === 'function' && typeof testAccActive === 'function' && testAccActive()) return v.appendChild(el('p', 'upd-sub', 'Chat is not available on test accounts.'));
+  if (chatLsGet('eud_chat_off') === '1') {
+    v.appendChild(el('p', 'upd-sub', 'Chat is turned off on this PC.'));
+    v.appendChild(chatBtn('Turn chat on', () => { chatLsSet('eud_chat_off', '0'); openChat(); }));
+    return;
+  }
+  if (chatLsGet('eud_chat_rules') !== '1') {
+    const c = el('div', 'chat-card');
+    c.appendChild(el('h3', null, 'Before you start'));
+    ['Chat is only between Roblox friends who both use Eudora.',
+     'Be kind. No bullying, no sexual talk, no threats. Links, emails and phone numbers are blocked.',
+     'Never share your address, school, passwords or any private info.',
+     'Messages are deleted after 7 days. You can block or report anyone, turn chat off, or delete your chat data at any time.',
+     'If a chat is reported, the whole conversation is sent to the Eudora owner and kept for up to 30 days to review it, even if someone deletes their data. If it involves a child being harmed, it may be passed to the authorities.',
+     'Eudora is not made by Roblox.']
+      .forEach((t) => c.appendChild(el('p', null, '• ' + t)));
+    c.appendChild(chatBtn('I understand, continue', () => { chatLsSet('eud_chat_rules', '1'); openChat(); }, true));
+    return v.appendChild(c);
+  }
+  const loading = el('p', 'upd-sub', 'Loading…');
+  v.appendChild(loading);
+  let st;
+  try { st = await chatCall('GET', '/chat/status'); } catch (e) { loading.textContent = "Couldn't reach the Eudora server (" + e.message + "). Try again in a minute."; return; }
+  loading.remove();
+  if (!st.verified) return chatVerifyUI(v);
+  chatMainUI(v);
+}
+function chatBtn(label, fn, primary) {
+  const b = el('button', 'chat-btn' + (primary ? ' primary' : ''), label);
+  b.onclick = async () => { b.disabled = true; try { await fn(); } catch (e) { toast(e.message || 'Something went wrong'); } b.disabled = false; };
+  return b;
+}
+async function chatVerifyUI(v) {
+  const c = el('div', 'chat-card');
+  c.appendChild(el('h3', null, 'Confirm this is your account'));
+  c.appendChild(el('p', null, 'So nobody can pretend to be you, put these 4 words in your Roblox profile description (the "About" box on your profile page), in this order, then press Check. You can remove them afterwards.'));
+  const code = el('div', 'chat-code', '…');
+  c.appendChild(code);
+  v.appendChild(c);
+  try { code.textContent = (await chatCall('POST', '/chat/verify/start', {})).code; } catch (e) { code.textContent = e.message; return; }
+  c.appendChild(chatBtn('Copy words', () => { navigator.clipboard.writeText(code.textContent); toast('Copied'); }));
+  c.appendChild(chatBtn('Open my Roblox profile', () => window.api.openLink('https://www.roblox.com/users/' + S.userId + '/profile')));
+  c.appendChild(chatBtn('Check', async () => {
+    const r = await chatCall('POST', '/chat/verify/check', {});
+    if (r.ok) { toast('Verified'); openChat(); } else toast("I can't see the words in your description yet. Save it on Roblox, wait a few seconds, then try again.");
+  }, true));
+}
+function chatMainUI(v) {
+  const wrap = el('div', 'chat-wrap');
+  const side = el('div', 'chat-side');
+  const pane = el('div', 'chat-pane');
+  wrap.append(side, pane);
+  v.appendChild(wrap);
+  const name = (id) => { const f = chat.friends.find((x) => x.id === id); return f ? f.name : 'User ' + id; };
+  const drawSide = async () => {
+    let inbox = { convos: [], blocked: [] };
+    try { inbox = await chatCall('GET', '/chat/inbox'); } catch {}
+    chat.convos = inbox.convos; chat.blocked = inbox.blocked;
+    side.replaceChildren(el('h3', null, 'Chats'));
+    const have = new Set(chat.convos.map((c) => c.with));
+    const rows = chat.convos.map((c) => ({ id: c.with, sub: (c.from === String(S.userId) ? 'You: ' : '') + c.last, unread: c.unread }));
+    chat.friends.filter((f) => !have.has(f.id) && chat.on.has(f.id) && !chat.blocked.includes(f.id)).forEach((f) => rows.push({ id: f.id, sub: 'Say hi', unread: 0 }));
+    if (!rows.length) side.appendChild(el('p', 'upd-sub', 'None of your Roblox friends have turned on Eudora chat yet.'));
+    rows.forEach((r) => {
+      const b = el('button', 'chat-row' + (chat.with === r.id ? ' sel' : ''));
+      b.append(el('b', null, name(r.id)), el('small', null, r.sub));
+      if (r.unread) b.appendChild(el('i', 'navdot2', String(r.unread)));
+      b.onclick = () => { chat.with = r.id; drawSide(); drawPane(); };
+      side.appendChild(b);
+    });
+    const foot = el('div', 'chat-foot');
+    foot.append(
+      chatBtn('Turn chat off', () => { chatLsSet('eud_chat_off', '1'); openChat(); }),
+      chatBtn('Delete my chat data', async () => { if (!confirm('Delete all your chats and chat verification from the server?')) return; await chatCall('POST', '/chat/wipe', {}); toast('Deleted'); openChat(); })
+    );
+    side.appendChild(foot);
+  };
+  const drawPane = async () => {
+    if (!chat.with) { pane.replaceChildren(el('p', 'upd-sub', 'Pick a friend on the left.')); return; }
+    const other = chat.with;
+    if (pane.dataset.with !== other) {
+      pane.dataset.with = other;
+      const head = el('div', 'chat-head');
+      head.appendChild(el('b', null, name(other)));
+      const act = el('span', 'chat-act');
+      act.append(
+        chatBtn('Block', async () => { if (!confirm('Block ' + name(other) + '? You will not see each other’s messages.')) return; await chatCall('POST', '/chat/block', { target: other, on: true }); chat.with = null; pane.dataset.with = ''; await drawSide(); drawPane(); }),
+        chatBtn('Report', async () => { if (!confirm('Report this chat? The whole conversation is sent to the Eudora owner and kept for up to 30 days.')) return; await chatCall('POST', '/chat/report', { with: other }); toast('Reported, thank you'); })
+      );
+      head.appendChild(act);
+      const list = el('div', 'chat-msgs');
+      const form = el('form', 'chat-form');
+      const inp = el('input'); inp.placeholder = 'Message…'; inp.maxLength = 300; inp.autocomplete = 'off';
+      const send = el('button', 'chat-btn primary', 'Send'); send.type = 'submit';
+      form.append(inp, send);
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const t = inp.value.trim();
+        if (!t) return;
+        send.disabled = true;
+        try { await chatCall('POST', '/chat/send', { to: other, text: t }); inp.value = ''; await drawPane(); drawSide(); } catch (er) { toast(er.message); }
+        send.disabled = false; inp.focus();
+      };
+      pane.replaceChildren(head, list, form);
+    }
+    let h;
+    try { h = await chatCall('GET', '/chat/history?with=' + other); } catch { return; }
+    if (pane.dataset.with !== other) return;
+    const list = pane.querySelector('.chat-msgs');
+    const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    list.replaceChildren(...h.msgs.map((m) => { const d = el('div', 'chat-msg' + (m.me ? ' me' : '')); d.textContent = m.m; d.title = new Date(m.at).toLocaleString(); return d; }));
+    if (!h.msgs.length) list.appendChild(el('p', 'upd-sub', 'No messages yet.'));
+    if (atEnd || !chat.last) list.scrollTop = list.scrollHeight;
+    chat.last = Date.now();
+  };
+  (async () => {
+    side.appendChild(el('p', 'upd-sub', 'Loading friends…'));
+    try { chat.friends = await chatFriendsList(); } catch { side.replaceChildren(el('p', 'upd-sub', "Couldn't load your friends (is your friends list private?).")); return; }
+    try { chat.on = new Set((await chatCall('GET', '/chat/who?ids=' + chat.friends.map((f) => f.id).join(','))).ids); } catch { chat.on = new Set(); }
+    await drawSide();
+    drawPane();
+    chat.timer = setInterval(() => { if (view === 'chat') { drawPane(); drawSide(); } }, 4000);
+  })();
+}
+// a pink dot on the Chat button when something unread is waiting
+async function chatBadge() {
+  try {
+    if (!S.userId || chatLsGet('eud_chat_off') === '1' || chatLsGet('eud_chat_rules') !== '1') return;
+    const r = await window.api.chatCall('GET', '/chat/inbox');
+    if (!r.ok) return;
+    const n = (r.data.convos || []).reduce((a, c) => a + c.unread, 0);
+    const b = navBtns['Chat'];
+    if (!b) return;
+    let dot = b.querySelector('.navdot');
+    if (n && view !== 'chat') { if (!dot) { dot = el('i', 'navdot'); b.appendChild(dot); } } else if (dot) dot.remove();
+  } catch {}
+}
+setTimeout(chatBadge, 6000);
+setInterval(chatBadge, 45000);
